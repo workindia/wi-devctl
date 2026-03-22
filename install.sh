@@ -43,14 +43,16 @@ detect_platform() {
 }
 
 choose_install_dir() {
-  if [ -d "/opt/homebrew/bin" ] && [ -w "/opt/homebrew/bin" ]; then
-    echo "/opt/homebrew/bin"
-  elif [ -w /usr/local/bin ] 2>/dev/null; then
-    echo "/usr/local/bin"
-  else
-    mkdir -p "$HOME/.local/bin"
-    echo "$HOME/.local/bin"
-  fi
+  # Only use a system directory if it is writable AND already on PATH.
+  # Directories may exist without being on PATH (e.g. /opt/homebrew/bin on Intel Macs).
+  for dir in "/opt/homebrew/bin" "/usr/local/bin"; do
+    if [ -d "$dir" ] && [ -w "$dir" ] && [[ ":$PATH:" == *":$dir:"* ]]; then
+      echo "$dir"
+      return
+    fi
+  done
+  mkdir -p "$HOME/.local/bin"
+  echo "$HOME/.local/bin"
 }
 
 # Append export PATH line to shell profiles if the dir is not already in PATH.
