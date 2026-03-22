@@ -61,3 +61,6 @@ def update_cli(manifest_url: str | None) -> None:
 cli.add_command(ai_kit, "ai-kit")
 cli.add_command(devspace, "devspace")
 cli.add_command(local, "local")
+
+if __name__ == "__main__":
+    cli()
