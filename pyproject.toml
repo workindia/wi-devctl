@@ -13,7 +13,7 @@ version = "0.1.0"
 description = "Developer control plane CLI - sync and manage developer tooling configurations from any repo"
 readme = "README.md"
 requires-python = ">=3.11"
-license = "MIT"
+license = { text = "MIT" }
 dependencies = [
     "click>=8.0",
     "pyyaml>=6.0",
