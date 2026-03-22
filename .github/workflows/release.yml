@@ -15,6 +15,8 @@ jobs:
             platform: darwin-amd64
           - os: macos-14
             platform: darwin-arm64
+          - os: ubuntu-latest
+            platform: linux-amd64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -29,6 +31,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install setuptools wheel pyinstaller pyyaml click
+
+      - name: Inject version from tag
+        shell: bash
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          sed -i.bak "s/__version__ = \".*\"/__version__ = \"$VERSION\"/" src/devctl/__init__.py
+          grep __version__ src/devctl/__init__.py
 
       - name: Build binary
         shell: bash
