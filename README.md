@@ -13,6 +13,64 @@ Developer control plane CLI — sync and manage developer tooling configurations
 - **Self-updating binary** — Single executable with automatic updates from GitHub releases
 - **Backup before overwrite** — Snapshots targets before applying changes
 
+## High-Level Design (HLD)
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        CLI Layer (cli/)                          │
+│  main │ ai-kit │ devspace │ local │ list │ update-cli            │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+┌───────────────────────────▼─────────────────────────────────────┐
+│                     Core Layer (core/)                           │
+│  protocol_engine │ repo_manager │ versioning │ backup │ updater   │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+┌───────────────────────────▼─────────────────────────────────────┐
+│                    Utils Layer (utils/)                           │
+│  shell │ yaml_loader │ logging                                   │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+┌───────────────────────────▼─────────────────────────────────────┐
+│                   Local Storage (~/.devctl/)                     │
+│  repos/ │ backups/ │ state.json │ .last_update_check              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+| Layer | Module | Responsibility |
+|-------|--------|----------------|
+| **CLI** | main | Root group, auto-update hook, `list`, `update-cli` |
+| **CLI** | ai-kit | setup, update, status, doctor |
+| **CLI** | devspace / local | Domain stubs (planned) |
+| **Core** | repo_manager | Clone/pull Git repos, URL → slug |
+| **Core** | protocol_engine | Parse `protocol.yaml`, execute file_sync, etc. |
+| **Core** | versioning | Persist repo metadata in `state.json` |
+| **Core** | backup | Snapshot target before overwrite |
+| **Core** | updater | Self-update binary from GitHub releases |
+| **Utils** | shell, yaml_loader, logging | Path expansion, YAML parse, stderr output |
+
+### Data Flow (ai-kit setup)
+
+```
+User: devctl ai-kit setup --repo https://github.com/org/configs
+         │
+         ▼
+  main.cli() ──► _maybe_auto_update() ──► ai_kit.setup()
+         │                                        │
+         │                                        ├──► repo_manager.clone_or_pull()
+         │                                        ├──► protocol_engine.apply_protocols()
+         │                                        │         ├──► backup.backup_target()
+         │                                        │         └──► file_sync (merge copy)
+         │                                        └──► versioning.register_repo()
+         │
+         ▼
+  Repo cloned → ~/.devctl/repos/org-configs/
+  Configs merged → ~/.cursor (or target from protocol.yaml)
+  State saved → ~/.devctl/state.json
+```
+
 ## Installation
 
 ### Public repositories
