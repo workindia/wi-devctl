@@ -155,10 +155,10 @@ Each module has one reason to change:
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/wi-devctl/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/WorkIndia-Private/wi-devctl/main/install.sh | bash
 ```
 
-Set `DEVCTL_GITHUB_OWNER` and `DEVCTL_GITHUB_REPO` if using a different repo.
+Defaults to WorkIndia-Private/wi-devctl. Override with `GITHUB_OWNER` and `GITHUB_REPO` if needed.
 
 ## Releasing to GitHub (for maintainers)
 
@@ -168,7 +168,7 @@ To publish devctl so anyone can install and use auto-update:
 
 - Ensure `.github/workflows/release.yml` exists (builds binaries on tag push).
 - Ensure `install.sh` is in the repo root.
-- In `install.sh`, set `GITHUB_OWNER` and `GITHUB_REPO` defaults to your org/repo (replace `YOUR_ORG`).
+- `install.sh` defaults to WorkIndia-Private/wi-devctl.
 
 ### 2. Create a release
 
@@ -195,7 +195,7 @@ The workflow generates `manifest.json` and uploads it as a release asset. Its UR
 
 The CLI uses this for auto-update in two ways:
 
-- **GitHub API** (default): No `DEVCTL_MANIFEST_URL` → fetches `https://api.github.com/repos/{owner}/{repo}/releases/latest` and derives manifest from the release. Users must set `DEVCTL_GITHUB_OWNER` and `DEVCTL_GITHUB_REPO` (or you bake them into the binary).
+- **GitHub API** (default): No `DEVCTL_MANIFEST_URL` → fetches `https://api.github.com/repos/WorkIndia-Private/wi-devctl/releases/latest` (overridable via `DEVCTL_GITHUB_OWNER`, `DEVCTL_GITHUB_REPO`).
 - **Custom manifest**: Set `DEVCTL_MANIFEST_URL` to the raw URL of `manifest.json`, e.g.:
   ```
   https://github.com/OWNER/wi-devctl/releases/download/v1.0.0/manifest.json
@@ -206,30 +206,22 @@ The CLI uses this for auto-update in two ways:
 
 **Option A — Install script (recommended)**
 
-Users run:
-
 ```bash
-GITHUB_OWNER=YOUR_ORG GITHUB_REPO=wi-devctl \
-  curl -fsSL https://raw.githubusercontent.com/YOUR_ORG/wi-devctl/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/WorkIndia-Private/wi-devctl/main/install.sh | bash
 ```
-
-Or host `install.sh` on your own domain and set `GITHUB_OWNER` / `GITHUB_REPO` in the script.
 
 **Option B — Direct download**
 
 ```bash
 # Example for macOS Apple Silicon
-curl -fsSL -o devctl https://github.com/YOUR_ORG/wi-devctl/releases/latest/download/devctl-darwin-arm64
+curl -fsSL -o devctl https://github.com/WorkIndia-Private/wi-devctl/releases/latest/download/devctl-darwin-arm64
 chmod +x devctl
 sudo mv devctl /usr/local/bin/
 ```
 
 ### 5. Auto-update configuration
 
-For installed binaries to self-update, one of:
-
-- **GitHub API**: Set `DEVCTL_GITHUB_OWNER` and `DEVCTL_GITHUB_REPO` (e.g. in `~/.bashrc` or `~/.zshrc`).
-- **Custom manifest**: Set `DEVCTL_MANIFEST_URL` to a URL that serves the current manifest (e.g. a CDN that you update on each release).
+Installed binaries use WorkIndia-Private/wi-devctl by default for auto-update. Override with `DEVCTL_GITHUB_OWNER` and `DEVCTL_GITHUB_REPO` if using a fork, or `DEVCTL_MANIFEST_URL` for a custom manifest.
 
 ## Usage
 
@@ -526,7 +518,7 @@ When an update is available (and not skipped):
 - `DEVCTL_MANIFEST_URL` - Override manifest URL for updates
 - `DEVCTL_SKIP_AUTO_UPDATE` - Set to `1` to disable auto-update
 - `DEVCTL_VERBOSE` - Set to `1` to enable verbose output (same as `-v`)
-- `DEVCTL_GITHUB_OWNER` - GitHub org/user (default: YOUR_ORG)
+- `DEVCTL_GITHUB_OWNER` - GitHub org for auto-update (default: WorkIndia-Private)
 - `DEVCTL_GITHUB_REPO` - Repo name (default: wi-devctl)
 
 ## Verbose Mode
