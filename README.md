@@ -154,11 +154,23 @@ Each module has one reason to change:
 
 ## Install
 
+**Single curl command (downloads pre-built binary from GitHub releases):**
+
 ```bash
+# Public repo
 curl -fsSL https://raw.githubusercontent.com/WorkIndia-Private/wi-devctl/main/install.sh | bash
 ```
 
-Defaults to WorkIndia-Private/wi-devctl. Override with `GITHUB_OWNER` and `GITHUB_REPO` if needed.
+**Private repo** — `raw.githubusercontent.com` won't work; use the API and export `GITHUB_TOKEN`:
+
+```bash
+export GITHUB_TOKEN=ghp_xxx   # or gh auth token
+curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.raw" \
+  "https://api.github.com/repos/WorkIndia-Private/wi-devctl/contents/install.sh?ref=main" | bash
+```
+
+- Requires a release (push a `v*` tag). Ensure token has `repo` scope.
+- Debug: `DEVCTL_DEBUG=1` prints token status
 
 ## Releasing to GitHub (for maintainers)
 

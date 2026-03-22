@@ -5,16 +5,22 @@ import os
 import platform
 import sys
 import tempfile
+import time
+from pathlib import Path
 from typing import Tuple
 from urllib.error import HTTPError
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from devctl import __version__
 from devctl.utils.logging import log_error
 
+# Seconds between automatic background update checks (default: 24 h).
+_UPDATE_CHECK_INTERVAL = int(os.environ.get("DEVCTL_UPDATE_CHECK_INTERVAL_HOURS", "24")) * 3600
+_LAST_CHECK_FILE = Path.home() / ".devctl" / ".last_update_check"
+
 
 def _get_platform_key() -> str:
-    """Return platform key for manifest downloads (e.g. darwin-arm64)."""
+    """Return platform key used in manifest/asset names (e.g. darwin-arm64)."""
     system = platform.system().lower()
     machine = platform.machine().lower()
     if machine in ("x86_64", "amd64"):
@@ -28,11 +34,41 @@ def _get_platform_key() -> str:
     return f"{os_name}-{arch}"
 
 
+def _make_request(url: str, accept: str = "application/vnd.github.v3+json") -> Request:
+    """Build a Request with optional GitHub auth from GITHUB_TOKEN env var."""
+    headers = {"Accept": accept}
+    token = os.environ.get("GITHUB_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return Request(url, headers=headers)
+
+
+def _is_update_check_due() -> bool:
+    """Return True if enough time has passed since the last background update check."""
+    try:
+        if _LAST_CHECK_FILE.exists():
+            last_check = float(_LAST_CHECK_FILE.read_text().strip())
+            if time.time() - last_check < _UPDATE_CHECK_INTERVAL:
+                return False
+    except Exception:
+        pass
+    return True
+
+
+def _record_update_check() -> None:
+    """Write current timestamp to the last-check file."""
+    try:
+        _LAST_CHECK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _LAST_CHECK_FILE.write_text(str(time.time()))
+    except Exception:
+        pass
+
+
 def _fetch_manifest(manifest_url: str | None) -> dict | None:
-    """Fetch manifest from URL or GitHub API. Returns None on failure."""
+    """Fetch update manifest. Falls back to GitHub Releases API. Returns None on failure."""
     if manifest_url:
         try:
-            with urlopen(manifest_url, timeout=10) as resp:
+            with urlopen(_make_request(manifest_url), timeout=10) as resp:
                 return json.loads(resp.read().decode())
         except Exception as e:
             log_error(f"Failed to fetch manifest from {manifest_url}: {e}")
@@ -43,22 +79,18 @@ def _fetch_manifest(manifest_url: str | None) -> dict | None:
     owner = os.environ.get("DEVCTL_GITHUB_OWNER", "WorkIndia-Private")
     api_url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
     try:
-        with urlopen(api_url, timeout=10) as resp:
+        with urlopen(_make_request(api_url), timeout=10) as resp:
             data = json.loads(resp.read().decode())
-        # Convert GitHub release to manifest format
         assets = {a["name"]: a["browser_download_url"] for a in data.get("assets", [])}
         tag = data.get("tag_name", "v0.0.0")
-        # Map platform keys to asset names (e.g. devctl-darwin-arm64)
         downloads = {}
         for name, url in assets.items():
             if name.startswith("devctl-") and not name.endswith(".json"):
-                # devctl-darwin-arm64 -> darwin-arm64
                 key = name.replace("devctl-", "", 1).rsplit(".", 1)[0]
                 downloads[key] = url
         return {"latest_version": tag, "downloads": downloads}
     except HTTPError as e:
         if e.code == 404:
-            # No releases yet or wrong owner/repo - skip silently
             return None
         log_error(f"Failed to fetch GitHub release: {e}")
         return None
@@ -68,7 +100,7 @@ def _fetch_manifest(manifest_url: str | None) -> dict | None:
 
 
 def check_for_update(manifest_url: str | None) -> Tuple[bool, str, str | None]:
-    """Check if update is available. Returns (has_update, latest_version, download_url)."""
+    """Check if an update is available. Returns (has_update, latest_version, download_url)."""
     manifest = _fetch_manifest(manifest_url)
     if not manifest:
         return False, __version__, None
@@ -81,7 +113,6 @@ def check_for_update(manifest_url: str | None) -> Tuple[bool, str, str | None]:
     if not download_url:
         return False, __version__, None
 
-    # Compare versions (strip 'v' for comparison)
     def norm(v: str) -> str:
         return v.lstrip("v")
 
@@ -91,8 +122,20 @@ def check_for_update(manifest_url: str | None) -> Tuple[bool, str, str | None]:
 
 
 def perform_update(manifest_url: str | None, force: bool = False) -> Tuple[bool, str, str | None]:
-    """Check for update and perform it if available. On success, re-execs (never returns).
-    Returns (has_update, latest_version, download_url) when no update performed."""
+    """Check for an update and apply it when available.
+
+    When an update is downloaded and installed, this function re-execs the new
+    binary (os.execv) and never returns. Otherwise it returns
+    (has_update, latest_version, download_url).
+
+    Background checks are rate-limited to once per DEVCTL_UPDATE_CHECK_INTERVAL_HOURS
+    (default 24 h). Pass force=True to bypass the rate limit (used by `devctl update-cli`).
+    """
+    if not force and not _is_update_check_due():
+        return False, __version__, None
+
+    _record_update_check()
+
     has_update, latest_version, download_url = check_for_update(manifest_url)
 
     if not has_update and not force:
@@ -100,38 +143,28 @@ def perform_update(manifest_url: str | None, force: bool = False) -> Tuple[bool,
 
     if not download_url:
         if force:
-            log_error("No download URL for this platform.")
+            log_error("No download URL available for this platform.")
         return False, latest_version or __version__, None
 
-    if not has_update and force:
-        # Force but already current - still try to re-download?
-        # For force we re-download anyway
-        pass
-
-    # Download and replace
     try:
-        with urlopen(download_url, timeout=60) as resp:
+        req = _make_request(download_url, accept="application/octet-stream")
+        with urlopen(req, timeout=60) as resp:
             new_binary = resp.read()
     except Exception as e:
         log_error(f"Failed to download update: {e}")
         return False, latest_version, None
 
-    exe = sys.executable
-    # When running as PyInstaller binary, sys.executable is the binary path
-    if getattr(sys, "frozen", False):
-        exe = sys.executable
-    else:
-        # Running from source - can't replace self
+    if not getattr(sys, "frozen", False):
         log_error("Auto-update only works when running the installed binary.")
         return False, latest_version, None
 
+    exe = sys.executable
     try:
         fd, path = tempfile.mkstemp(suffix=".devctl", prefix="devctl-")
         try:
             os.write(fd, new_binary)
             os.close(fd)
             os.chmod(path, 0o755)
-            # Atomic replace
             os.replace(path, exe)
         except Exception:
             os.close(fd)
@@ -142,6 +175,5 @@ def perform_update(manifest_url: str | None, force: bool = False) -> Tuple[bool,
         log_error(f"Failed to replace binary: {e}")
         return False, latest_version, None
 
-    # Re-exec
     os.execv(exe, [exe] + sys.argv[1:])
-    return True, latest_version, download_url  # Unreachable
+    return True, latest_version, download_url  # unreachable
