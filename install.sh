@@ -221,10 +221,16 @@ main() {
 
   # Ensure install dir is in PATH for the current shell session
   export PATH="${INSTALL_DIR}:$PATH"
-  "${INSTALL_DIR}/${binary_name}" --version >&2 || {
-    echo "❌ Binary verification failed" >&2
+  local ver_output
+  ver_output=$("${INSTALL_DIR}/${binary_name}" --version 2>&1) || {
+    echo "❌ Binary verification failed (non-zero exit)" >&2
     exit 1
   }
+  if [ -z "$ver_output" ]; then
+    echo "❌ Binary verification failed (no output from --version; binary may be wrong arch or corrupt)" >&2
+    exit 1
+  fi
+  echo "  → $ver_output" >&2
 
   echo "" >&2
   echo "🚀 devctl ready. Run: devctl --help" >&2
