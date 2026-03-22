@@ -81,7 +81,11 @@ def _fetch_manifest(manifest_url: str | None) -> dict | None:
     try:
         with urlopen(_make_request(api_url), timeout=10) as resp:
             data = json.loads(resp.read().decode())
-        assets = {a["name"]: a["browser_download_url"] for a in data.get("assets", [])}
+        # Use the API asset URL (.url), not browser_download_url.
+        # For private repos, browser_download_url redirects to a pre-signed CDN URL that
+        # rejects the Authorization header. The API URL + Accept: application/octet-stream
+        # lets GitHub handle auth cleanly before redirecting.
+        assets = {a["name"]: a["url"] for a in data.get("assets", [])}
         tag = data.get("tag_name", "v0.0.0")
         downloads = {}
         for name, url in assets.items():

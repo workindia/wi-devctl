@@ -120,8 +120,12 @@ get_download_url() {
   local version download_url
   if command -v jq >/dev/null 2>&1; then
     version=$(echo "$json" | jq -r '.tag_name // empty')
+    # Use the API asset URL (.url), not .browser_download_url.
+    # For private repos, browser_download_url redirects to a pre-signed CDN URL that
+    # rejects the Authorization header. The API URL + Accept: application/octet-stream
+    # lets GitHub handle auth cleanly before redirecting.
     download_url=$(echo "$json" | jq -r --arg name "$asset_name" '
-      .assets[] | select(.name == $name) | .browser_download_url
+      .assets[] | select(.name == $name) | .url
     ')
   else
     version=$(echo "$json" | python3 -c "
@@ -135,7 +139,7 @@ d=json.load(sys.stdin)
 name='$asset_name'
 for a in d.get('assets',[]):
     if a.get('name')==name:
-        print(a.get('browser_download_url',''))
+        print(a.get('url',''))
         break
 " 2>/dev/null)
   fi
@@ -145,15 +149,12 @@ for a in d.get('assets',[]):
     exit 1
   fi
 
-  # browser_download_url works for public repos; for private, we need the API asset URL with Accept header
   if [ -z "$download_url" ] || [ "$download_url" = "null" ]; then
-    # Fallback: construct URL (works for public repos)
-    download_url="https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/${version}/${asset_name}"
-    echo "  → Asset $asset_name, trying direct URL" >&2
-  else
-    echo "  → Found $asset_name" >&2
+    echo "❌ Asset $asset_name not found in release $version." >&2
+    exit 1
   fi
 
+  echo "  → Found $asset_name" >&2
   echo "$download_url"
 }
 
