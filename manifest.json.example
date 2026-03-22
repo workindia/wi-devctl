@@ -1,0 +1,9 @@
+{
+  "latest_version": "v1.2.0",
+  "downloads": {
+    "darwin-amd64": "https://github.com/OWNER/wi-devctl/releases/download/v1.2.0/devctl-darwin-amd64",
+    "darwin-arm64": "https://github.com/OWNER/wi-devctl/releases/download/v1.2.0/devctl-darwin-arm64",
+    "linux-amd64": "https://github.com/OWNER/wi-devctl/releases/download/v1.2.0/devctl-linux-amd64",
+    "windows-amd64": "https://github.com/OWNER/wi-devctl/releases/download/v1.2.0/devctl-windows-amd64.exe"
+  }
+}

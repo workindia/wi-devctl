@@ -1,0 +1,85 @@
+"""Repository management - clone and pull repos."""
+
+import re
+import subprocess
+from pathlib import Path
+from urllib.parse import urlparse
+
+from devctl.utils.logging import log_verbose
+from devctl.utils.shell import get_repos_dir
+
+
+def url_to_slug(repo_url: str) -> str:
+    """Convert repo URL to slug. Supports both HTTP(S) and SSH URLs.
+
+    Examples:
+        https://github.com/org/repo.git -> org-repo
+        git@github.com:org/repo.git -> org-repo
+    """
+    url = repo_url.strip()
+    # SSH format: git@host:org/repo or git@host:org/repo.git
+    if url.startswith("git@"):
+        # Extract path after the colon (org/repo or org/repo.git)
+        if ":" in url:
+            path = url.split(":", 1)[1]
+        else:
+            path = url
+    else:
+        parsed = urlparse(url)
+        path = parsed.path.strip("/")
+
+    # Remove .git suffix
+    if path.endswith(".git"):
+        path = path[:-4]
+    # Replace / with -
+    slug = path.replace("/", "-")
+    # Sanitize: only alphanumeric, dash, underscore
+    slug = re.sub(r"[^\w\-]", "", slug)
+    return slug or "repo"
+
+
+def clone_or_pull(repo_url: str) -> Path:
+    """Clone repo or pull if exists. Returns path to repo root."""
+    repos_dir = get_repos_dir()
+    repos_dir.mkdir(parents=True, exist_ok=True)
+
+    slug = url_to_slug(repo_url)
+    repo_path = repos_dir / slug
+
+    if repo_path.exists():
+        log_verbose(f"Pulling latest: {repo_url}")
+        subprocess.run(
+            ["git", "pull"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+        )
+        log_verbose(f"Pulled to {repo_path}")
+    else:
+        log_verbose(f"Cloning {repo_url} -> {repo_path}")
+        subprocess.run(
+            ["git", "clone", repo_url, str(repo_path)],
+            check=True,
+            capture_output=True,
+        )
+        log_verbose(f"Cloned to {repo_path}")
+
+    return repo_path
+
+
+def get_repo_path(repo_url: str | None = None, slug: str | None = None) -> Path | None:
+    """Get path to repo by URL or slug. Returns None if not found."""
+    repos_dir = get_repos_dir()
+    if not repos_dir.exists():
+        return None
+
+    if slug:
+        path = repos_dir / slug
+        return path if path.exists() else None
+
+    if repo_url:
+        s = url_to_slug(repo_url)
+        path = repos_dir / s
+        return path if path.exists() else None
+
+    return None
