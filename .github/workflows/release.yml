@@ -28,12 +28,12 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller pyyaml click
+          pip install setuptools wheel pyinstaller pyyaml click
 
       - name: Build binary
         shell: bash
         run: |
-          pip install -e .
+          pip install -e . --no-build-isolation
           pyinstaller --onefile --name devctl --paths src src/devctl/cli/main.py
 
       - name: Rename artifact

@@ -1,3 +1,8 @@
+# Dev install with verbose logging to see where it stalls:
+#   pip install -e . -v        # verbose
+#   pip install -e . -vv       # more verbose (shows each subprocess)
+#   pip install -e . --no-build-isolation  # skip isolated build env (avoids "Installing build dependencies" hang)
+
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
