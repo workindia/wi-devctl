@@ -11,6 +11,8 @@ Developer control plane CLI — sync and manage developer tooling configurations
 - **Repo-agnostic** — Works with any Git repo; no hardcoded URLs
 - **Multiple domains** — ai-kit (Cursor rules, skills), devspace (planned), local (planned)
 - **Self-updating binary** — Single executable with automatic updates from GitHub releases
+- **Background config sync** — Optional hourly pull via launchd (macOS) or cron (Linux), with desktop notifications when updates land
+- **One-shot install** — Optional `install.sh` env vars to install devctl, run `ai-kit setup`, and register background sync in one run
 - **Backup before overwrite** — Snapshots targets before applying changes
 
 ## High-Level Design (HLD)
@@ -30,7 +32,7 @@ Developer control plane CLI — sync and manage developer tooling configurations
                             │
 ┌───────────────────────────▼─────────────────────────────────────┐
 │                    Utils Layer (utils/)                           │
-│  shell │ yaml_loader │ logging                                   │
+│  shell │ yaml_loader │ logging │ notify                          │
 └───────────────────────────┬─────────────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────────────┐
@@ -42,14 +44,16 @@ Developer control plane CLI — sync and manage developer tooling configurations
 | Layer | Module | Responsibility |
 |-------|--------|----------------|
 | **CLI** | main | Root group, auto-update hook, `list`, `update-cli` |
-| **CLI** | ai-kit | setup, update, status, doctor |
+| **CLI** | ai-kit | setup, sync, update, install/uninstall-background-sync, status, doctor |
 | **CLI** | devspace / local | Domain stubs (planned) |
 | **Core** | repo_manager | Clone/pull Git repos, URL → slug |
 | **Core** | protocol_engine | Parse `protocol.yaml`, execute file_sync, etc. |
 | **Core** | versioning | Persist repo metadata in `state.json` |
 | **Core** | backup | Snapshot target before overwrite |
 | **Core** | updater | Self-update binary from GitHub releases |
-| **Utils** | shell, yaml_loader, logging | Path expansion, YAML parse, stderr output |
+| **Core** | config_sync | Check managed repos for new pushes, pull and re-apply, notify |
+| **Core** | background_sync | Install/uninstall launchd (macOS) or cron (Linux) for hourly sync |
+| **Utils** | shell, yaml_loader, logging, notify | Paths, YAML, stderr logging, OS notifications |
 
 ### Data Flow (ai-kit setup)
 
@@ -58,12 +62,17 @@ User: devctl ai-kit setup --repo https://github.com/org/configs
          │
          ▼
   main.cli() ──► _maybe_auto_update() ──► ai_kit.setup()
-         │                                        │
-         │                                        ├──► repo_manager.clone_or_pull()
-         │                                        ├──► protocol_engine.apply_protocols()
-         │                                        │         ├──► backup.backup_target()
-         │                                        │         └──► file_sync (merge copy)
-         │                                        └──► versioning.register_repo()
+         │                │                        │
+         │                │                        ├──► repo_manager.clone_or_pull()
+         │                │                        ├──► protocol_engine.apply_protocols()
+         │                │                        │         ├──► backup.backup_target()
+         │                │                        │         └──► file_sync (merge copy)
+         │                │                        └──► versioning.register_repo()
+         │                │
+         │                └── check wi-devctl releases
+         │
+         │  (separate: launchd/cron runs devctl ai-kit sync hourly)
+         │       └── config_sync: fetch → pull if behind → re-apply → notify
          │
          ▼
   Repo cloned → ~/.devctl/repos/org-configs/
@@ -73,15 +82,48 @@ User: devctl ai-kit setup --repo https://github.com/org/configs
 
 ## Installation
 
+`install.sh` downloads a pre-built **devctl** binary from GitHub Releases. You need at least one release (a `v*` tag). Supported assets:
+
+- `devctl-darwin-amd64`, `devctl-darwin-arm64`, `devctl-linux-amd64`
+
 ### Public repositories
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/WorkIndia-Private/wi-devctl/main/install.sh | bash
 ```
 
-### Private repositories
+### One-shot: binary + ai-kit + background sync
 
-Export a GitHub token with `repo` scope, then:
+Set these **before** piping `install.sh` into `bash`. After the binary is installed, the script can run `ai-kit setup` and register hourly sync.
+
+```bash
+export DEVCTL_AI_KIT_REPO=https://github.com/your-org/your-ai-config-repo
+export DEVCTL_AI_KIT_BACKGROUND_SYNC=1
+curl -fsSL https://raw.githubusercontent.com/WorkIndia-Private/wi-devctl/main/install.sh | bash
+```
+
+| Variable | Effect |
+|----------|--------|
+| `DEVCTL_AI_KIT_REPO` | Run `devctl ai-kit setup --repo <url>` after install (**git** required on `PATH`) |
+| `DEVCTL_AI_KIT_BACKGROUND_SYNC=1` | Then run `devctl ai-kit install-background-sync` (macOS / Linux only; skipped elsewhere) |
+
+`GITHUB_TOKEN` used only for **curl** when fetching `install.sh` or release assets does **not** configure `git clone` for your config repo. Use SSH or a git credential helper for private repos.
+
+Combine with a private **wi-devctl** install and one-shot ai-kit:
+
+```bash
+export GITHUB_TOKEN=ghp_xxx
+export DEVCTL_AI_KIT_REPO=git@github.com:your-org/your-ai-config-repo.git
+export DEVCTL_AI_KIT_BACKGROUND_SYNC=1
+curl -fsSL \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  -H "Accept: application/vnd.github.raw" \
+  "https://api.github.com/repos/WorkIndia-Private/wi-devctl/contents/install.sh?ref=main" | bash
+```
+
+### Private wi-devctl (install script only)
+
+If you only need the installer from a private repo (no one-shot ai-kit):
 
 ```bash
 export GITHUB_TOKEN=ghp_xxx
@@ -91,20 +133,19 @@ curl -fsSL \
   "https://api.github.com/repos/WorkIndia-Private/wi-devctl/contents/install.sh?ref=main" | bash
 ```
 
-Requires at least one release (push a `v*` tag). Binaries are built for:
-- `darwin-amd64` (macOS Intel)
-- `darwin-arm64` (macOS Apple Silicon)
-- `linux-amd64`
-
 ## Usage
 
 ```bash
-devctl ai-kit setup --repo <repo_url>   # Clone repo, apply protocols
-devctl ai-kit update                    # Pull latest and re-apply
-devctl ai-kit status                    # Show drift
-devctl ai-kit doctor                    # Validate configs
-devctl list                             # List managed repos
-devctl update-cli                       # Force CLI update
+devctl ai-kit setup --repo <url>              # Clone / pull config repo, apply protocols
+devctl ai-kit install-background-sync         # Hourly sync: launchd (macOS) or cron (Linux)
+devctl ai-kit uninstall-background-sync       # Remove that scheduled job
+devctl ai-kit sync                            # Run sync now; notifies when pulls happen
+devctl ai-kit sync -v                         # Same, with step-by-step messages on stderr
+devctl ai-kit update                          # Pull all managed repos and re-apply (explicit)
+devctl ai-kit status                          # Show drift vs protocol obligations
+devctl ai-kit doctor                          # Validate configs
+devctl list                                   # List managed repos
+devctl update-cli                             # Force devctl binary update
 devctl --help
 ```
 
@@ -129,7 +170,13 @@ protocols:
 devctl ai-kit setup --repo https://github.com/your-org/ai-configs
 ```
 
-3. Repo is cloned to `~/.devctl/repos/`, configs are merged into `~/.cursor`.
+3. (Optional) Install background sync to auto-pull updates hourly and get notified:
+
+```bash
+devctl ai-kit install-background-sync
+```
+
+4. Repo is cloned to `~/.devctl/repos/`, configs are merged into `~/.cursor`.
 
 ## Protocol Reference
 
@@ -178,10 +225,37 @@ Fork the repo and add domains for your org — no hardcoded URLs; each domain wo
 |----------|-------------|
 | `DEVCTL_MANIFEST_URL` | Custom manifest URL for updates |
 | `DEVCTL_SKIP_AUTO_UPDATE` | Set to `1` to disable auto-update |
+| `DEVCTL_SKIP_NOTIFY` | Set to `1` to disable OS notifications on sync |
 | `DEVCTL_VERBOSE` | Set to `1` or use `-v` for verbose output |
 | `DEVCTL_GITHUB_OWNER` | GitHub org (default: WorkIndia-Private) |
 | `DEVCTL_GITHUB_REPO` | Repo name (default: wi-devctl) |
 | `DEVCTL_UPDATE_CHECK_INTERVAL_HOURS` | Hours between auto-update checks (default: 24) |
+| `DEVCTL_AI_KIT_REPO` | *(install.sh only)* If set, run `ai-kit setup` after binary install |
+| `DEVCTL_AI_KIT_BACKGROUND_SYNC` | *(install.sh only)* Set to `1` to run `install-background-sync` after setup |
+
+### Background sync and notifications
+
+After `ai-kit setup`, install the scheduler so repos stay current without running `devctl` manually:
+
+1. `devctl ai-kit install-background-sync`
+2. **macOS**: `~/Library/LaunchAgents/com.devctl.config-sync.plist`, interval **3600** seconds  
+   **Linux**: cron line at minute 0 each hour (`0 * * * * … ai-kit sync`)
+
+The job runs `devctl ai-kit sync`. When new commits are pulled, devctl shows a **desktop notification** (macOS: AppleScript; Linux: `notify-send`). Set `DEVCTL_SKIP_NOTIFY=1` to turn notifications off.
+
+**Quick check (macOS)** after install:
+
+```bash
+launchctl kickstart -k "gui/$(id -u)/com.devctl.config-sync"
+```
+
+**Verbose manual sync:**
+
+```bash
+devctl ai-kit sync -v
+```
+
+Interactive `devctl ai-kit update` still works when you want explicit pulls and printed output per repo.
 
 ## Project Structure
 
@@ -189,8 +263,8 @@ Fork the repo and add domains for your org — no hardcoded URLs; each domain wo
 wi-devctl/
 ├── src/devctl/
 │   ├── cli/           # main, ai-kit, devspace, local
-│   ├── core/          # protocol_engine, repo_manager, versioning, backup, updater
-│   └── utils/         # shell, yaml_loader, logging
+│   ├── core/          # protocol_engine, repo_manager, versioning, backup, updater, config_sync, background_sync
+│   └── utils/         # shell, yaml_loader, logging, notify
 ├── examples/
 │   └── protocol.yaml
 ├── tests/

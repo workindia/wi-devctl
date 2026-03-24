@@ -6,6 +6,13 @@
 #   export GITHUB_TOKEN=ghp_xxx
 #   curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.raw" \
 #     "https://api.github.com/repos/WorkIndia-Private/wi-devctl/contents/install.sh?ref=main" | bash
+#
+# One-shot ai-kit + background sync (after binary install):
+#   export DEVCTL_AI_KIT_REPO=https://github.com/your-org/ai-collab-kit
+#   export DEVCTL_AI_KIT_BACKGROUND_SYNC=1   # optional: launchd (macOS) / cron (Linux)
+#   curl -fsSL ... | bash
+# Private collab repo: ensure git can clone it (SSH key or credential helper); GITHUB_TOKEN here
+# only affects downloading devctl, not git clone.
 set -e
 
 DEVCTL_VERSION="${DEVCTL_VERSION:-latest}"
@@ -13,10 +20,11 @@ GITHUB_OWNER="${GITHUB_OWNER:-WorkIndia-Private}"
 GITHUB_REPO="${GITHUB_REPO:-wi-devctl}"
 INSTALL_DIR=""
 STEP=0
+TOTAL_STEPS=5
 
 log_step() {
   STEP=$((STEP + 1))
-  echo "[devctl] [$STEP/5] $*" >&2
+  echo "[devctl] [$STEP/${TOTAL_STEPS}] $*" >&2
 }
 
 # Debug: show token status (not the value)
@@ -182,6 +190,10 @@ download_and_install() {
 }
 
 main() {
+  TOTAL_STEPS=5
+  [ -n "${DEVCTL_AI_KIT_REPO:-}" ] && TOTAL_STEPS=$((TOTAL_STEPS + 1))
+  [ "${DEVCTL_AI_KIT_BACKGROUND_SYNC:-}" = "1" ] && TOTAL_STEPS=$((TOTAL_STEPS + 1))
+
   log_step "Detecting platform"
   local platform
   platform=$(detect_platform)
@@ -231,6 +243,37 @@ main() {
     exit 1
   fi
   echo "  → $ver_output" >&2
+
+  local devctl_bin="${INSTALL_DIR}/${binary_name}"
+
+  if [ -n "${DEVCTL_AI_KIT_REPO:-}" ]; then
+    log_step "ai-kit setup (DEVCTL_AI_KIT_REPO)"
+    if ! command -v git >/dev/null 2>&1; then
+      echo "❌ git is required for ai-kit setup. Install git and re-run, or run manually:" >&2
+      echo "   $devctl_bin ai-kit setup --repo <url>" >&2
+      exit 1
+    fi
+    if ! "$devctl_bin" ai-kit setup --repo "$DEVCTL_AI_KIT_REPO"; then
+      echo "❌ ai-kit setup failed." >&2
+      exit 1
+    fi
+    echo "  → ai-kit setup complete" >&2
+  fi
+
+  if [ "${DEVCTL_AI_KIT_BACKGROUND_SYNC:-}" = "1" ]; then
+    log_step "Background sync (DEVCTL_AI_KIT_BACKGROUND_SYNC=1)"
+    case "$platform" in
+      darwin-*|linux-*)
+        if ! "$devctl_bin" ai-kit install-background-sync; then
+          echo "❌ install-background-sync failed." >&2
+          exit 1
+        fi
+        ;;
+      *)
+        echo "  → Skipping background sync (supported on macOS and Linux only)" >&2
+        ;;
+    esac
+  fi
 
   echo "" >&2
   echo "🚀 devctl ready. Run: devctl --help" >&2
