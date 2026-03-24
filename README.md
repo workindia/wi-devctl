@@ -37,7 +37,7 @@ Developer control plane CLI — sync and manage developer tooling configurations
                             │
 ┌───────────────────────────▼─────────────────────────────────────┐
 │                   Local Storage (~/.devctl/)                     │
-│  repos/ │ backups/ │ state.json │ .last_update_check              │
+│  repos/ │ backups/ │ logs/ │ state.json │ .last_update_check       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -242,6 +242,16 @@ After `ai-kit setup`, install the scheduler so repos stay current without runnin
    **Linux**: cron line at minute 0 each hour (`0 * * * * … ai-kit sync`)
 
 The job runs `devctl ai-kit sync`. When new commits are pulled, devctl shows a **desktop notification** (macOS: AppleScript; Linux: `notify-send`). Set `DEVCTL_SKIP_NOTIFY=1` to turn notifications off.
+
+**Logs:** stdout and stderr from the scheduled job are appended to:
+
+`~/.devctl/logs/background-sync.log`
+
+```bash
+tail -f ~/.devctl/logs/background-sync.log
+```
+
+If you installed background sync before this log file existed, run `devctl ai-kit uninstall-background-sync` and `install-background-sync` again so launchd/cron picks up the log path.
 
 **Quick check (macOS)** after install:
 
