@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from devctl.utils.shell import get_background_sync_log_path, get_logs_dir
+
 
 def _get_devctl_path() -> str | None:
     """Return the devctl binary path for use in cron/launchd."""
@@ -26,8 +28,13 @@ def _install_launchd(devctl_path: str) -> str | None:
     plist_dir.mkdir(parents=True, exist_ok=True)
     plist_path = plist_dir / "com.devctl.config-sync.plist"
 
-    # escape plist string values
-    devctl_esc = devctl_path.replace("\\", "\\\\").replace('"', '\\"')
+    get_logs_dir().mkdir(parents=True, exist_ok=True)
+    log_path = get_background_sync_log_path()
+    log_str = str(log_path)
+
+    # escape plist string values (XML entity for & in paths)
+    devctl_esc = devctl_path.replace("&", "&amp;").replace("\\", "\\\\").replace('"', '\\"')
+    log_esc = log_str.replace("&", "&amp;")
 
     plist_content = f'''<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -46,9 +53,9 @@ def _install_launchd(devctl_path: str) -> str | None:
   <key>RunAtLoad</key>
   <false/>
   <key>StandardOutPath</key>
-  <string>/dev/null</string>
+  <string>{log_esc}</string>
   <key>StandardErrorPath</key>
-  <string>/dev/null</string>
+  <string>{log_esc}</string>
 </dict>
 </plist>
 '''
@@ -68,7 +75,9 @@ def _install_launchd(devctl_path: str) -> str | None:
 
 def _install_cron(devctl_path: str) -> str | None:
     """Add @hourly cron job. Returns error message or None."""
-    cron_line = f"0 * * * * {devctl_path} ai-kit sync > /dev/null 2>&1\n"
+    get_logs_dir().mkdir(parents=True, exist_ok=True)
+    log_path = get_background_sync_log_path()
+    cron_line = f"0 * * * * {devctl_path} ai-kit sync >> {log_path} 2>&1\n"
     try:
         result = subprocess.run(
             ["crontab", "-l"],
@@ -103,12 +112,14 @@ def install_background_sync() -> tuple[bool, str]:
         err = _install_launchd(devctl_path)
         if err:
             return False, f"launchd install failed: {err}"
-        return True, "Background sync installed (launchd, every hour)."
+        log_file = get_background_sync_log_path()
+        return True, f"Background sync installed (launchd, every hour). Logs: {log_file}"
     if system == "linux":
         err = _install_cron(devctl_path)
         if err:
             return False, f"cron install failed: {err}"
-        return True, "Background sync installed (cron @hourly)."
+        log_file = get_background_sync_log_path()
+        return True, f"Background sync installed (cron @hourly). Logs: {log_file}"
     return False, f"Background sync not supported on {system}."
 
 

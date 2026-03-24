@@ -28,3 +28,13 @@ def get_backups_dir() -> Path:
 def get_state_path() -> Path:
     """Return the state.json path (~/.devctl/state.json)."""
     return get_devctl_home() / "state.json"
+
+
+def get_logs_dir() -> Path:
+    """Return the logs directory (~/.devctl/logs)."""
+    return get_devctl_home() / "logs"
+
+
+def get_background_sync_log_path() -> Path:
+    """Log file for launchd/cron ai-kit sync jobs."""
+    return get_logs_dir() / "background-sync.log"
