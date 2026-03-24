@@ -51,7 +51,7 @@ def update_cli(manifest_url: str | None) -> None:
     from devctl.core.updater import perform_update
 
     # perform_update re-execs on success, so we only return when no update or error
-    has_update, latest_version, download_url = perform_update(manifest_url, force=True)
+    has_update, _, download_url = perform_update(manifest_url, force=True)
     if not has_update or not download_url:
         click.echo("Already up to date.")
     else:

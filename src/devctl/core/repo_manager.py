@@ -67,6 +67,50 @@ def clone_or_pull(repo_url: str) -> Path:
     return repo_path
 
 
+def fetch_and_has_updates(repo_path: Path) -> bool:
+    """Fetch from origin and return True if remote has new commits (local is behind)."""
+    log_verbose(f"git fetch origin (cwd={repo_path})")
+    try:
+        subprocess.run(
+            ["git", "fetch", "origin"],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as e:
+        err = getattr(e, "stderr", None) or b""
+        if isinstance(err, bytes):
+            err = err.decode(errors="replace")
+        log_verbose(f"git fetch failed: {err or e}")
+        return False
+    branch_result = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+    )
+    if branch_result.returncode != 0 or not branch_result.stdout.strip():
+        log_verbose("could not resolve current branch")
+        return False
+    branch = branch_result.stdout.strip()
+    remote_ref = f"origin/{branch}"
+    result = subprocess.run(
+        ["git", "rev-list", "--count", f"HEAD..{remote_ref}"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        log_verbose(f"no upstream commits vs {remote_ref} (missing ref or diverged)")
+        return False
+    try:
+        behind = int(result.stdout.strip())
+    except (ValueError, AttributeError):
+        return False
+    log_verbose(f"branch {branch}: {behind} commit(s) behind {remote_ref}")
+    return behind > 0
+
+
 def get_repo_path(repo_url: str | None = None, slug: str | None = None) -> Path | None:
     """Get path to repo by URL or slug. Returns None if not found."""
     repos_dir = get_repos_dir()

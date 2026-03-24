@@ -30,6 +30,7 @@ def setup(repo_url: str) -> None:
         log_verbose(f"Registering {slug} in state")
         register_repo(slug, repo_url, repo_path, version)
         click.echo(f"Setup complete: {slug} (v{version})")
+        click.echo("Tip: run 'devctl ai-kit install-background-sync' to auto-pull updates hourly and get notified.")
         if missing_obl:
             click.echo("Missing obligations:", err=True)
             for p in missing_obl:
@@ -43,6 +44,56 @@ def setup(repo_url: str) -> None:
         raise SystemExit(1)
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+
+@ai_kit.command()
+@click.option("-v", "--verbose", is_flag=True, help="Show sync steps on stderr")
+@click.option("--background", is_flag=True, hidden=True, help="Run silently for cron/launchd")
+def sync(background: bool, verbose: bool) -> None:
+    """Sync config repos (for cron/launchd). Auto-pulls latest and notifies when updates exist."""
+    import os
+
+    from devctl.core.config_sync import perform_config_sync
+    from devctl.utils.logging import set_verbose
+
+    if verbose or os.environ.get("DEVCTL_VERBOSE") == "1":
+        set_verbose(True)
+
+    updated = perform_config_sync(force=True, notify=True)
+    if not background:
+        if not list_repos():
+            click.echo("No managed repos. Run 'devctl ai-kit setup --repo <url>' first.")
+        elif not updated:
+            click.echo("Sync complete: all repos up to date.")
+        else:
+            for slug in updated:
+                click.echo(f"Synced: {slug}")
+
+
+@ai_kit.command("install-background-sync")
+def install_background_sync_cmd() -> None:
+    """Install hourly background sync (launchd on macOS, cron on Linux). Notifies when updates are pulled."""
+    from devctl.core.background_sync import install_background_sync
+
+    ok, msg = install_background_sync()
+    if ok:
+        click.echo(msg)
+    else:
+        click.echo(f"Failed: {msg}", err=True)
+        raise SystemExit(1)
+
+
+@ai_kit.command("uninstall-background-sync")
+def uninstall_background_sync_cmd() -> None:
+    """Remove background sync (launchd/cron)."""
+    from devctl.core.background_sync import uninstall_background_sync
+
+    ok, msg = uninstall_background_sync()
+    if ok:
+        click.echo(msg)
+    else:
+        click.echo(f"Failed: {msg}", err=True)
         raise SystemExit(1)
 
 
