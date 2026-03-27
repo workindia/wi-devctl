@@ -1,7 +1,7 @@
 """Version tracking in state.json."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +56,7 @@ def register_repo(slug: str, url: str, path: Path, version: str) -> None:
         "url": url,
         "path": str(path),
         "version": version,
-        "last_updated": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "last_updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     save_state(state)
 

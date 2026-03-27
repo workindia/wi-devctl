@@ -230,6 +230,8 @@ Fork the repo and add domains for your org — no hardcoded URLs; each domain wo
 | `DEVCTL_GITHUB_OWNER` | GitHub org (default: WorkIndia-Private) |
 | `DEVCTL_GITHUB_REPO` | Repo name (default: wi-devctl) |
 | `DEVCTL_UPDATE_CHECK_INTERVAL_HOURS` | Hours between auto-update checks (default: 24) |
+| `DEVCTL_CONFIG_SYNC_INTERVAL_MINUTES` | Minutes between ai-kit config sync rate-limit checks; overrides `DEVCTL_CONFIG_SYNC_INTERVAL_HOURS` when set (fractional ok) |
+| `DEVCTL_CONFIG_SYNC_INTERVAL_HOURS` | Hours between config sync checks when minutes unset (default: 1; fractional ok) |
 | `DEVCTL_AI_KIT_REPO` | *(install.sh only)* If set, run `ai-kit setup` after binary install |
 | `DEVCTL_AI_KIT_BACKGROUND_SYNC` | *(install.sh only)* Set to `1` to run `install-background-sync` after setup |
 
@@ -247,11 +249,18 @@ The job runs `devctl ai-kit sync`. When new commits are pulled, devctl shows a *
 
 `~/.devctl/logs/background-sync.log`
 
+The file is created at install (empty until the first run). **macOS** does not run the job until the next interval (**3600 s**) unless you kickstart (below), so the log can stay empty until then.
+
 ```bash
 tail -f ~/.devctl/logs/background-sync.log
 ```
 
-If you installed background sync before this log file existed, run `devctl ai-kit uninstall-background-sync` and `install-background-sync` again so launchd/cron picks up the log path.
+If the log path in your plist/cron is wrong, run `devctl ai-kit uninstall-background-sync` and `install-background-sync` again.
+
+**Common gotchas**
+
+- **Do not install with `sudo`** — the plist and log path are tied to the user that ran install (`Path.home()`). If you used sudo, logs live under root’s home, not yours.
+- **Buffered output** — scheduled runs use a non-TTY stdout; the job sets `PYTHONUNBUFFERED=1` so lines appear promptly after each run.
 
 **Quick check (macOS)** after install:
 
@@ -297,6 +306,23 @@ pytest
 pyinstaller --onefile --name devctl --paths src src/devctl/cli/main.py
 ./dist/devctl --help
 ```
+
+### Automated tests
+
+Run `pytest` from the repo root (uses `pythonpath = ["src"]` in `pyproject.toml`).
+
+| Area | File | What it covers |
+|------|------|----------------|
+| **Protocols** | `tests/test_protocol_engine.py` | Load YAML/YML, validation errors, `file_sync`, merge behavior, **obligations / recommendations** present vs missing, unknown type, missing source, `apply_protocols` across multiple protocols |
+| **Updater** | `tests/test_updater.py` | Manifest / version comparison, platform key shape, `perform_update` rate limit and force paths (no real download) |
+| **Config sync** | `tests/test_config_sync.py` | `perform_config_sync`: no repos, rate limit, pull + notify, skip bad path / no remote updates |
+| **CLI** | `tests/test_cli.py` | `list`, `ai-kit sync`, `update-cli`, `--version`, `devspace`/`local` help (`DEVCTL_SKIP_AUTO_UPDATE=1`, isolated `HOME`) |
+| **State** | `tests/test_versioning.py` | `state.json`, `register_repo`, `get_repo_version` |
+| **Background install** | `tests/test_background_sync.py` | launchd plist write (mocked `launchctl`), missing binary, uninstall when absent |
+| **Notifications** | `tests/test_notify.py` | `DEVCTL_SKIP_NOTIFY`, macOS `osascript` path |
+| **Repos** | `tests/test_repo_manager.py` | URL → slug, `fetch_and_has_updates` (mocked git) |
+
+End-to-end **git clone**, **auto-update binary replace**, and **real launchd/cron** are not run in CI (use a manual machine or staging for those).
 
 ## Releasing
 

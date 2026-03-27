@@ -1,5 +1,6 @@
 """ai-kit commands: setup, update, status, doctor."""
 
+import sys
 from pathlib import Path
 
 import click
@@ -69,6 +70,7 @@ def sync(background: bool, verbose: bool) -> None:
         else:
             for slug in updated:
                 click.echo(f"Synced: {slug}")
+        sys.stdout.flush()
 
 
 @ai_kit.command("install-background-sync")

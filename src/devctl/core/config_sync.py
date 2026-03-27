@@ -1,5 +1,6 @@
 """Recurring config repo sync - check for new pushes and pull + re-apply."""
 
+from collections.abc import Mapping
 import os
 import time
 from pathlib import Path
@@ -10,10 +11,22 @@ from devctl.core.versioning import list_repos, register_repo
 from devctl.utils.logging import log_error, log_verbose
 from devctl.utils.shell import get_devctl_home
 
+def _config_sync_interval_seconds(
+    env: Mapping[str, str] | None = None,
+) -> float:
+    """Parse sync interval from env: minutes win if set; else hours (default 1 h).
+
+    Fractional values are allowed for both units.
+    """
+    e = os.environ if env is None else env
+    raw_mins = e.get("DEVCTL_CONFIG_SYNC_INTERVAL_MINUTES")
+    if raw_mins is not None and str(raw_mins).strip() != "":
+        return float(raw_mins) * 60
+    return float(e.get("DEVCTL_CONFIG_SYNC_INTERVAL_HOURS", "1")) * 3600
+
+
 # Seconds between automatic config sync checks (default: 1 hour).
-_CONFIG_SYNC_INTERVAL = int(
-    os.environ.get("DEVCTL_CONFIG_SYNC_INTERVAL_HOURS", "1")
-) * 3600
+_CONFIG_SYNC_INTERVAL = _config_sync_interval_seconds()
 _LAST_SYNC_FILE = get_devctl_home() / ".last_config_sync"
 
 
@@ -47,8 +60,9 @@ def perform_config_sync(
     """Check managed repos for new pushes; pull and re-apply when updates exist.
 
     Runs for each managed repo (from --repo in ai-kit setup). Rate-limited to
-    once per DEVCTL_CONFIG_SYNC_INTERVAL_HOURS (default: 1 h). Pass force=True
-    to bypass (e.g. for background/cron).
+    once per DEVCTL_CONFIG_SYNC_INTERVAL_MINUTES if set, else
+    DEVCTL_CONFIG_SYNC_INTERVAL_HOURS (default: 1 h; fractional values ok).
+    Pass force=True to bypass (e.g. for background/cron).
 
     Returns the list of repo slugs that were updated.
     """
