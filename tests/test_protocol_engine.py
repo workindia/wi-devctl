@@ -7,6 +7,7 @@ import pytest
 
 from devctl.core.protocol_engine import (
     Protocol,
+    apply_protocols,
     load_protocols,
     execute_protocol,
 )
@@ -143,3 +144,117 @@ def test_execute_protocol_unknown_type(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="Unknown protocol type"):
         execute_protocol(protocol, tmp_path, "test", do_backup=False)
+
+
+def test_execute_protocol_source_missing(tmp_path: Path) -> None:
+    """Raise when source path does not exist."""
+    protocol = Protocol(
+        name="test",
+        type="file_sync",
+        source="nope",
+        target=str(tmp_path / "tgt"),
+        obligations=[],
+        recommendations=[],
+    )
+    with pytest.raises(FileNotFoundError, match="Source not found"):
+        execute_protocol(protocol, tmp_path, "slug", do_backup=False)
+
+
+def test_execute_protocol_obligations_satisfied(tmp_path: Path) -> None:
+    """No missing obligations when synced files exist."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "rules").mkdir()
+    (src / "rules" / "sec.json").write_text("{}")
+    tgt = tmp_path / "out"
+    protocol = Protocol(
+        name="c",
+        type="file_sync",
+        source="src",
+        target=str(tgt),
+        obligations=["rules/sec.json"],
+        recommendations=["opt/readme.md"],
+    )
+    miss_o, miss_r = execute_protocol(protocol, tmp_path, "s", do_backup=False)
+    assert miss_o == []
+    assert miss_r == [str(tgt / "opt" / "readme.md")]
+
+
+def test_execute_protocol_obligation_missing(tmp_path: Path) -> None:
+    """Report obligation path missing under target after sync."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("x")
+    tgt = tmp_path / "out"
+    protocol = Protocol(
+        name="c",
+        type="file_sync",
+        source="src",
+        target=str(tgt),
+        obligations=["rules/must-exist.json"],
+        recommendations=[],
+    )
+    miss_o, miss_r = execute_protocol(protocol, tmp_path, "s", do_backup=False)
+    assert len(miss_o) == 1
+    assert "must-exist.json" in miss_o[0]
+    assert miss_r == []
+
+
+def test_load_protocols_protocol_entry_invalid(tmp_path: Path) -> None:
+    """protocols list entries must be objects."""
+    (tmp_path / "protocol.yaml").write_text(
+        """
+version: v1
+protocols:
+  - not_an_object
+"""
+    )
+    with pytest.raises(ValueError, match="must be an object"):
+        load_protocols(tmp_path)
+
+
+def test_load_protocols_missing_required_fields(tmp_path: Path) -> None:
+    """Each protocol needs name, type, source, target."""
+    (tmp_path / "protocol.yaml").write_text(
+        """
+version: v1
+protocols:
+  - name: only-name
+    type: file_sync
+"""
+    )
+    with pytest.raises(ValueError, match="requires name, type, source, target"):
+        load_protocols(tmp_path)
+
+
+def test_apply_protocols_aggregates_missing(tmp_path: Path) -> None:
+    """apply_protocols merges missing obligation lists across protocols."""
+    out1 = tmp_path / "OUT1"
+    out2 = tmp_path / "OUT2"
+    (tmp_path / "protocol.yaml").write_text(
+        f"""
+version: v1
+protocols:
+  - name: one
+    type: file_sync
+    source: s1
+    target: {out1}
+    obligations: [missing1.txt]
+  - name: two
+    type: file_sync
+    source: s2
+    target: {out2}
+    obligations: [missing2.txt]
+"""
+    )
+    (tmp_path / "s1").mkdir()
+    (tmp_path / "s1" / "f.txt").write_text("a")
+    (tmp_path / "s2").mkdir()
+    (tmp_path / "s2" / "g.txt").write_text("b")
+
+    ver, protos, miss_o, miss_r = apply_protocols(tmp_path, "slug", do_backup=False)
+    assert ver == "v1"
+    assert len(protos) == 2
+    assert len(miss_o) == 2
+    assert any("missing1.txt" in m for m in miss_o)
+    assert any("missing2.txt" in m for m in miss_o)

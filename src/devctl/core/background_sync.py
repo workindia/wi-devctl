@@ -30,6 +30,7 @@ def _install_launchd(devctl_path: str) -> str | None:
 
     get_logs_dir().mkdir(parents=True, exist_ok=True)
     log_path = get_background_sync_log_path()
+    log_path.touch(exist_ok=True)
     log_str = str(log_path)
 
     # escape plist string values (XML entity for & in paths)
@@ -52,6 +53,11 @@ def _install_launchd(devctl_path: str) -> str | None:
   <integer>3600</integer>
   <key>RunAtLoad</key>
   <false/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
   <key>StandardOutPath</key>
   <string>{log_esc}</string>
   <key>StandardErrorPath</key>
@@ -77,7 +83,11 @@ def _install_cron(devctl_path: str) -> str | None:
     """Add @hourly cron job. Returns error message or None."""
     get_logs_dir().mkdir(parents=True, exist_ok=True)
     log_path = get_background_sync_log_path()
-    cron_line = f"0 * * * * {devctl_path} ai-kit sync >> {log_path} 2>&1\n"
+    log_path.touch(exist_ok=True)
+    # env ensures line-oriented logs when stdout is not a TTY (fully buffered otherwise).
+    cron_line = (
+        f"0 * * * * env PYTHONUNBUFFERED=1 {devctl_path} ai-kit sync >> {log_path} 2>&1\n"
+    )
     try:
         result = subprocess.run(
             ["crontab", "-l"],
