@@ -262,7 +262,13 @@ If the log path in your plist/cron is wrong, run `devctl ai-kit uninstall-backgr
 - **Do not install with `sudo`** — the plist and log path are tied to the user that ran install (`Path.home()`). If you used sudo, logs live under root’s home, not yours.
 - **Buffered output** — scheduled runs use a non-TTY stdout; the job sets `PYTHONUNBUFFERED=1` so lines appear promptly after each run.
 
-**Quick check (macOS)** after install:
+**Quick check (macOS)** after install — inspect launchd state (e.g. `state`, last exit status):
+
+```bash
+launchctl print "gui/$(id -u)/com.devctl.config-sync"
+```
+
+Force one run immediately:
 
 ```bash
 launchctl kickstart -k "gui/$(id -u)/com.devctl.config-sync"
