@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -85,6 +86,29 @@ def test_cli_ai_kit_sync_updated(tmp_path: Path) -> None:
     assert r.exit_code == 0
     assert "Synced: a" in r.output
     assert "Synced: b" in r.output
+
+
+def test_cli_ai_kit_sync_background_logs_summary(tmp_path: Path) -> None:
+    devctl_home = tmp_path / ".devctl"
+    devctl_home.mkdir()
+    (devctl_home / "state.json").write_text(
+        json.dumps({"repos": {"x": {"url": "u", "path": str(tmp_path)}}})
+    )
+    with patch("devctl.core.config_sync.perform_config_sync", return_value=[]):
+        runner = CliRunner()
+        r = runner.invoke(cli, ["ai-kit", "sync", "--background"], env=_env(tmp_path))
+    assert r.exit_code == 0
+    assert "devctl ai-kit sync:" in r.output
+    assert "up to date" in r.output
+    assert re.search(r"\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\]", r.output)
+
+
+def test_cli_ai_kit_sync_background_no_repos(tmp_path: Path) -> None:
+    with patch("devctl.core.config_sync.perform_config_sync", return_value=[]):
+        runner = CliRunner()
+        r = runner.invoke(cli, ["ai-kit", "sync", "--background"], env=_env(tmp_path))
+    assert r.exit_code == 0
+    assert "no managed repos" in r.output
 
 
 def test_cli_update_cli_no_op(tmp_path: Path) -> None:

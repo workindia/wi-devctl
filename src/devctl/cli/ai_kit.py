@@ -62,7 +62,21 @@ def sync(background: bool, verbose: bool) -> None:
         set_verbose(True)
 
     updated = perform_config_sync(force=True, notify=True)
-    if not background:
+    if background:
+        # launchd/cron attach stdout to background-sync.log — always emit one line so the log is verifiable.
+        from datetime import datetime, timezone
+
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        repos = list_repos()
+        if not repos:
+            click.echo(f"[{ts}] devctl ai-kit sync: no managed repos")
+        elif updated:
+            click.echo(
+                f"[{ts}] devctl ai-kit sync: updated {len(updated)} repo(s): {', '.join(updated)}"
+            )
+        else:
+            click.echo(f"[{ts}] devctl ai-kit sync: ok, {len(repos)} repo(s) up to date")
+    else:
         if not list_repos():
             click.echo("No managed repos. Run 'devctl ai-kit setup --repo <url>' first.")
         elif not updated:
@@ -70,7 +84,7 @@ def sync(background: bool, verbose: bool) -> None:
         else:
             for slug in updated:
                 click.echo(f"Synced: {slug}")
-        sys.stdout.flush()
+    sys.stdout.flush()
 
 
 @ai_kit.command("install-background-sync")
@@ -81,6 +95,7 @@ def install_background_sync_cmd() -> None:
     ok, msg = install_background_sync()
     if ok:
         click.echo(msg)
+        click.echo("Check registration: devctl ai-kit background-sync-status")
     else:
         click.echo(f"Failed: {msg}", err=True)
         raise SystemExit(1)
@@ -97,6 +112,14 @@ def uninstall_background_sync_cmd() -> None:
     else:
         click.echo(f"Failed: {msg}", err=True)
         raise SystemExit(1)
+
+
+@ai_kit.command("background-sync-status")
+def background_sync_status_cmd() -> None:
+    """Show whether background sync is installed and launchd/cron registration."""
+    from devctl.core.background_sync import describe_background_sync_status
+
+    click.echo(describe_background_sync_status())
 
 
 @ai_kit.command()

@@ -38,6 +38,8 @@ def test_install_background_sync_darwin_success(tmp_path: Path, monkeypatch: pyt
     plist_text = plist.read_text()
     assert fake_devctl in plist_text
     assert "PYTHONUNBUFFERED" in plist_text
+    assert "--background" in plist_text
+    assert "<true/>" in plist_text  # RunAtLoad
     assert (logs / "background-sync.log").exists()
 
 
