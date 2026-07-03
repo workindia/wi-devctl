@@ -119,6 +119,11 @@ def execute_protocol(
 
     if protocol.type == "file_sync":
         missing_obl, missing_rec = _file_sync(source_path, target_path, slug, do_backup)
+    elif protocol.type == "claude_hooks":
+        from devctl.core.claude_hooks import sync_claude_hooks
+
+        sync_claude_hooks(source_path, target_path)
+        return [], []  # claude_hooks manages its own target; no obligation checking
     else:
         raise ValueError(f"Unknown protocol type: {protocol.type}")
 

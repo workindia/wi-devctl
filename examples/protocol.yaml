@@ -17,3 +17,25 @@ protocols:
     recommendations:
       - skills/debugging.md
 
+  # claude_hooks: syncs Claude Code hook definitions into ~/.claude/settings.json.
+  # - Non-yaml files in source dir are copied to ~/.devctl/hooks/ (for hook scripts).
+  # - hooks.yaml defines which hooks to install; removing it auto-uninstalls on next sync.
+  - name: claude-hooks
+    type: claude_hooks
+    source: hooks
+    target: ~/.claude/settings.json
+
+# Example hooks/ directory layout in your config repo:
+#
+#   hooks/
+#     hooks.yaml          # hook definitions (managed centrally)
+#     skill_tracker.py    # hook script copied to ~/.devctl/hooks/
+#
+# hooks/hooks.yaml example:
+#
+#   hooks:
+#     PreToolUse:
+#       - matcher: Skill
+#         hooks:
+#           - type: command
+#             command: "python3 ~/.devctl/hooks/skill_tracker.py"
