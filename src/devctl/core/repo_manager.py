@@ -52,15 +52,15 @@ def clone_or_pull(repo_url: str) -> Path:
             ["git", "pull"],
             cwd=repo_path,
             check=True,
-            capture_output=True,
+            stdout=subprocess.DEVNULL,
         )
         log_verbose(f"Pulled to {repo_path}")
     else:
         log_verbose(f"Cloning {repo_url} -> {repo_path}")
         subprocess.run(
-            ["git", "clone", repo_url, str(repo_path)],
+            ["git", "clone", "--progress", repo_url, str(repo_path)],
             check=True,
-            capture_output=True,
+            stdout=subprocess.DEVNULL,
         )
         log_verbose(f"Cloned to {repo_path}")
 
