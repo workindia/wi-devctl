@@ -2,6 +2,10 @@
 
 import os
 
+from devctl.utils.ssl_certs import configure_ssl_certs
+
+configure_ssl_certs()
+
 import click
 
 from devctl import __version__

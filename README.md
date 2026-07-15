@@ -311,7 +311,9 @@ pip install -e ".[dev]"
 pytest
 
 # Build binary locally
-pyinstaller --onefile --name devctl --paths src src/devctl/cli/main.py
+pyinstaller --onefile --name devctl --paths src \
+  --hidden-import certifi --collect-all certifi \
+  src/devctl/cli/main.py
 ./dist/devctl --help
 ```
 
@@ -330,19 +332,30 @@ Run `pytest` from the repo root (uses `pythonpath = ["src"]` in `pyproject.toml`
 | **Notifications** | `tests/test_notify.py` | `DEVCTL_SKIP_NOTIFY`, macOS `osascript` path |
 | **Repos** | `tests/test_repo_manager.py` | URL → slug, `fetch_and_has_updates` (mocked git) |
 | **Backups** | `tests/test_backup.py` | Backup snapshots, retention pruning, dry-run |
+| **SSL** | `tests/test_ssl_certs.py` | certifi CA bundle configuration for HTTPS |
 
 End-to-end **git clone**, **auto-update binary replace**, and **real launchd/cron** are not run in CI (use a manual machine or staging for those).
 
 ## Releasing
 
-Push a tag to trigger the release workflow:
+Merging a PR does **not** auto-tag. After your changes are on `main`, create a release tag using either method below. Pushing a `v*` tag triggers the **Release** workflow (builds binaries and publishes a GitHub Release).
+
+### Option A: GitHub Actions (recommended)
+
+1. Merge the PR to `main`
+2. Go to **Actions → Create release tag → Run workflow**
+3. Enter the version (e.g. `v0.4.1`)
+4. The workflow tags `main` and pushes the tag; **Release** runs automatically
+
+### Option B: Command line
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git checkout main && git pull
+git tag v0.4.1
+git push origin v0.4.1
 ```
 
-CI builds binaries and creates a GitHub Release. Auto-update uses the GitHub Releases API (or `DEVCTL_MANIFEST_URL` if set).
+Auto-update uses the GitHub Releases API (or `DEVCTL_MANIFEST_URL` if set).
 
 ## License
 
