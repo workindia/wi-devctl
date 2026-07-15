@@ -346,7 +346,6 @@ Merging a PR does **not** auto-tag. After your changes are on `main`, create a r
 2. Go to **Actions → Create release tag → Run workflow**
 3. Enter the version (e.g. `v0.4.1`)
 4. The workflow tags `main` and pushes the tag; **Release** runs automatically
-5. Update `CHANGELOG.md`: move `[Unreleased]` entries into the new version section
 
 ### Option B: Command line
 
@@ -357,8 +356,6 @@ git push origin v0.4.1
 ```
 
 Auto-update uses the GitHub Releases API (or `DEVCTL_MANIFEST_URL` if set).
-
-See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ## License
 
