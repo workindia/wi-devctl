@@ -166,6 +166,23 @@ def update(repo_url: str | None) -> None:
             raise SystemExit(1)
 
 
+@ai_kit.command("prune-backups")
+@click.option("--dry-run", is_flag=True, help="Show backups that would be deleted without removing them")
+def prune_backups_cmd(dry_run: bool) -> None:
+    """Remove old config backups beyond the retention limit."""
+    from devctl.core.backup import prune_backups
+
+    deleted = prune_backups(dry_run=dry_run)
+    if not deleted:
+        click.echo("No backups to prune.")
+        return
+
+    action = "Would delete" if dry_run else "Deleted"
+    click.echo(f"{action} {len(deleted)} backup(s):")
+    for path in deleted:
+        click.echo(f"  - {path}")
+
+
 @ai_kit.command()
 @click.option("--repo", "repo_url", help="Specific repo to check (default: all)")
 def status(repo_url: str | None) -> None:

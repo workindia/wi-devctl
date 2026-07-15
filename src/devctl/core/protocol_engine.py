@@ -6,7 +6,7 @@ from typing import Any
 
 import yaml
 
-from devctl.core.backup import backup_target
+from devctl.core.backup import backup_target, prune_backups
 from devctl.utils.logging import log_verbose
 from devctl.utils.shell import expand_path
 from devctl.utils.yaml_loader import load_yaml
@@ -153,5 +153,8 @@ def apply_protocols(
         obl, rec = execute_protocol(protocol, repo_path, slug, do_backup)
         all_missing_obl.extend(obl)
         all_missing_rec.extend(rec)
+
+    if do_backup:
+        prune_backups(slug)
 
     return version, protocols, all_missing_obl, all_missing_rec
