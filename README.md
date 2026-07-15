@@ -338,14 +338,24 @@ End-to-end **git clone**, **auto-update binary replace**, and **real launchd/cro
 
 ## Releasing
 
-Push a tag to trigger the release workflow:
+Merging a PR does **not** auto-tag. After your changes are on `main`, create a release tag using either method below. Pushing a `v*` tag triggers the **Release** workflow (builds binaries and publishes a GitHub Release).
+
+### Option A: GitHub Actions (recommended)
+
+1. Merge the PR to `main`
+2. Go to **Actions → Create release tag → Run workflow**
+3. Enter the version (e.g. `v0.4.1`)
+4. The workflow tags `main` and pushes the tag; **Release** runs automatically
+
+### Option B: Command line
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git checkout main && git pull
+git tag v0.4.1
+git push origin v0.4.1
 ```
 
-CI builds binaries and creates a GitHub Release. Auto-update uses the GitHub Releases API (or `DEVCTL_MANIFEST_URL` if set).
+Auto-update uses the GitHub Releases API (or `DEVCTL_MANIFEST_URL` if set).
 
 ## License
 
