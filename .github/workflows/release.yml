@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Tag to release (e.g. v0.4.1). Defaults to the workflow ref."
+        required: false
+        type: string
 
 jobs:
   build:

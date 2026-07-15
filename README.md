@@ -345,7 +345,7 @@ Merging a PR does **not** auto-tag. After your changes are on `main`, create a r
 1. Merge the PR to `main`
 2. Go to **Actions → Create release tag → Run workflow**
 3. Enter the version (e.g. `v0.4.1`)
-4. The workflow tags `main` and pushes the tag; **Release** runs automatically
+4. The workflow tags `main`, pushes the tag, and explicitly triggers **Release** (GitHub does not auto-start workflows for tag pushes made with `GITHUB_TOKEN`)
 
 ### Option B: Command line
 
