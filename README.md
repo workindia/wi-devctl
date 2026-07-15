@@ -311,7 +311,9 @@ pip install -e ".[dev]"
 pytest
 
 # Build binary locally
-pyinstaller --onefile --name devctl --paths src src/devctl/cli/main.py
+pyinstaller --onefile --name devctl --paths src \
+  --hidden-import certifi --collect-all certifi \
+  src/devctl/cli/main.py
 ./dist/devctl --help
 ```
 
@@ -330,6 +332,7 @@ Run `pytest` from the repo root (uses `pythonpath = ["src"]` in `pyproject.toml`
 | **Notifications** | `tests/test_notify.py` | `DEVCTL_SKIP_NOTIFY`, macOS `osascript` path |
 | **Repos** | `tests/test_repo_manager.py` | URL → slug, `fetch_and_has_updates` (mocked git) |
 | **Backups** | `tests/test_backup.py` | Backup snapshots, retention pruning, dry-run |
+| **SSL** | `tests/test_ssl_certs.py` | certifi CA bundle configuration for HTTPS |
 
 End-to-end **git clone**, **auto-update binary replace**, and **real launchd/cron** are not run in CI (use a manual machine or staging for those).
 

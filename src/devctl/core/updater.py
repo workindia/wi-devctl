@@ -1,5 +1,9 @@
 """Self-update logic."""
 
+from devctl.utils.ssl_certs import configure_ssl_certs
+
+configure_ssl_certs()
+
 import json
 import os
 import platform
@@ -9,10 +13,11 @@ import time
 from pathlib import Path
 from typing import Tuple
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from devctl import __version__
 from devctl.utils.logging import log_error
+from devctl.utils.ssl_certs import open_url
 
 # Seconds between automatic background update checks (default: 24 h).
 _UPDATE_CHECK_INTERVAL = int(os.environ.get("DEVCTL_UPDATE_CHECK_INTERVAL_HOURS", "24")) * 3600
@@ -68,7 +73,7 @@ def _fetch_manifest(manifest_url: str | None) -> dict | None:
     """Fetch update manifest. Falls back to GitHub Releases API. Returns None on failure."""
     if manifest_url:
         try:
-            with urlopen(_make_request(manifest_url), timeout=10) as resp:
+            with open_url(_make_request(manifest_url), timeout=10) as resp:
                 return json.loads(resp.read().decode())
         except Exception as e:
             log_error(f"Failed to fetch manifest from {manifest_url}: {e}")
@@ -79,7 +84,7 @@ def _fetch_manifest(manifest_url: str | None) -> dict | None:
     owner = os.environ.get("DEVCTL_GITHUB_OWNER", "WorkIndia-Private")
     api_url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
     try:
-        with urlopen(_make_request(api_url), timeout=10) as resp:
+        with open_url(_make_request(api_url), timeout=10) as resp:
             data = json.loads(resp.read().decode())
         # Use the API asset URL (.url), not browser_download_url.
         # For private repos, browser_download_url redirects to a pre-signed CDN URL that
@@ -152,7 +157,7 @@ def perform_update(manifest_url: str | None, force: bool = False) -> Tuple[bool,
 
     try:
         req = _make_request(download_url, accept="application/octet-stream")
-        with urlopen(req, timeout=60) as resp:
+        with open_url(req, timeout=60) as resp:
             new_binary = resp.read()
     except Exception as e:
         log_error(f"Failed to download update: {e}")
