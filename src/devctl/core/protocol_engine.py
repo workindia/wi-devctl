@@ -1,15 +1,17 @@
 """Protocol parsing and execution."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import subprocess
 from pathlib import Path
-from typing import Any
-
-import yaml
 
 from devctl.core.backup import backup_target, prune_backups
 from devctl.utils.logging import log_verbose
 from devctl.utils.shell import expand_path
 from devctl.utils.yaml_loader import load_yaml
+import shutil
+import logging
+logger = logging.getLogger(__name__)
+
 
 
 @dataclass
@@ -18,10 +20,11 @@ class Protocol:
 
     name: str
     type: str
-    source: str
-    target: str
-    obligations: list[str]
-    recommendations: list[str]
+    source: str = ""
+    target: str = ""
+    script: str = ""
+    obligations: list[str] = field(default_factory=list)
+    recommendations: list[str] = field(default_factory=list)
 
 
 _PROTOCOL_NAMES = ("protocol.yaml", "protocol.yml")
@@ -58,16 +61,23 @@ def load_protocols(repo_path: Path) -> tuple[str, list[Protocol]]:
             raise ValueError(f"protocol[{i}] must be an object")
         name = p.get("name")
         ptype = p.get("type")
-        source = p.get("source")
-        target = p.get("target")
-        if not all([name, ptype, source, target]):
-            raise ValueError(f"protocol[{i}] requires name, type, source, target")
+        source = p.get("source", "")
+        target = p.get("target", "")
+        script = p.get("script", "")
+
+        if not all([name, ptype]):
+            raise ValueError(f"protocol[{i}] requires name and type")
+        if ptype == "file_sync" and not all([source, target]):
+            raise ValueError(f"protocol[{i}] requires source and target for file_sync")
+        if ptype == "script_run" and not script:
+            raise ValueError(f"protocol[{i}] requires script for script_run")
         protocols.append(
             Protocol(
                 name=str(name),
                 type=str(ptype),
                 source=str(source),
                 target=str(target),
+                script=str(script),
                 obligations=list(p.get("obligations") or []),
                 recommendations=list(p.get("recommendations") or []),
             )
@@ -104,6 +114,44 @@ def _file_sync(
     return [], []
 
 
+def _script_run(script: str, repo_path: Path, protocol_name: str) -> tuple[list[str], list[str]]:
+    """Execute script_run: run a shell command from the repo root."""
+    if not script.strip():
+        raise ValueError(f"script_run protocol '{protocol_name}' requires a non-empty script")
+
+    log_verbose(f"Running script_run '{protocol_name}' in {repo_path}: {script}")
+
+
+    proc = subprocess.run(
+        script,
+        cwd=repo_path,
+        shell=True,
+        capture_output=True,
+        text=True,
+    )
+
+    stdout = (proc.stdout or "").strip()
+    stderr = (proc.stderr or "").strip()
+    if stdout:
+        log_verbose(f"script_run '{protocol_name}' stdout:\n{stdout}")
+
+    if stderr:
+        log_verbose(f"script_run '{protocol_name}' stderr:\n{stderr}")
+
+    if proc.returncode != 0:
+        parts = [
+            f"script_run failed for '{protocol_name}' (exit code {proc.returncode})",
+            f"command: {script}",
+        ]
+        if stdout:
+            parts.append(f"stdout:\n{stdout}")
+        if stderr:
+            parts.append(f"stderr:\n{stderr}")
+        raise RuntimeError("\n".join(parts))
+
+    return [], []
+
+
 def execute_protocol(
     protocol: Protocol,
     repo_path: Path,
@@ -111,28 +159,27 @@ def execute_protocol(
     do_backup: bool = True,
 ) -> tuple[list[str], list[str]]:
     """Execute a single protocol. Returns (missing_obligations, missing_recommendations)."""
-    source_path = (repo_path / protocol.source).resolve()
-    target_path = expand_path(protocol.target)
-
-    if not source_path.exists():
-        raise FileNotFoundError(f"Source not found: {source_path}")
-
     if protocol.type == "file_sync":
+        source_path = (repo_path / protocol.source).resolve()
+        target_path = expand_path(protocol.target)
+        if not source_path.exists():
+            raise FileNotFoundError(f"Source not found: {source_path}")
         missing_obl, missing_rec = _file_sync(source_path, target_path, slug, do_backup)
+        # Check obligations (paths relative to target)
+        for rel in protocol.obligations:
+            full = target_path / rel
+            if not full.exists():
+                missing_obl.append(str(full))
+
+        # Check recommendations
+        for rel in protocol.recommendations:
+            full = target_path / rel
+            if not full.exists():
+                missing_rec.append(str(full))
+    elif protocol.type == "script_run":
+        missing_obl, missing_rec = _script_run(protocol.script, repo_path, protocol.name)
     else:
         raise ValueError(f"Unknown protocol type: {protocol.type}")
-
-    # Check obligations (paths relative to target)
-    for rel in protocol.obligations:
-        full = target_path / rel
-        if not full.exists():
-            missing_obl.append(str(full))
-
-    # Check recommendations
-    for rel in protocol.recommendations:
-        full = target_path / rel
-        if not full.exists():
-            missing_rec.append(str(full))
 
     return missing_obl, missing_rec
 
@@ -149,7 +196,13 @@ def apply_protocols(
     all_missing_rec: list[str] = []
 
     for protocol in protocols:
-        log_verbose(f"Executing protocol '{protocol.name}' ({protocol.type}): {protocol.source} -> {protocol.target}")
+        if protocol.type == "script_run":
+            log_verbose(f"Executing protocol '{protocol.name}' ({protocol.type}): {protocol.script}")
+        else:
+            log_verbose(
+                f"Executing protocol '{protocol.name}' ({protocol.type}): "
+                f"{protocol.source} -> {protocol.target}"
+            )
         obl, rec = execute_protocol(protocol, repo_path, slug, do_backup)
         all_missing_obl.extend(obl)
         all_missing_rec.extend(rec)

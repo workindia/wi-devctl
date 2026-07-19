@@ -103,6 +103,53 @@ def test_cli_ai_kit_sync_background_logs_summary(tmp_path: Path) -> None:
     assert re.search(r"\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\]", r.output)
 
 
+def test_cli_ai_kit_sync_background_logs_branch(tmp_path: Path) -> None:
+    devctl_home = tmp_path / ".devctl"
+    devctl_home.mkdir()
+    (devctl_home / "state.json").write_text(
+        json.dumps(
+            {
+                "repos": {
+                    "org-kit": {
+                        "url": "https://github.com/org/kit",
+                        "path": str(tmp_path),
+                        "branch": "feature-x",
+                    }
+                }
+            }
+        )
+    )
+    with patch("devctl.core.config_sync.perform_config_sync", return_value=[]):
+        runner = CliRunner()
+        r = runner.invoke(cli, ["ai-kit", "sync", "--background"], env=_env(tmp_path))
+    assert r.exit_code == 0
+    assert "org-kit@feature-x" in r.output
+
+
+def test_cli_ai_kit_setup_with_branch(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    with (
+        patch("devctl.cli.ai_kit.clone_or_pull", return_value=repo) as pull,
+        patch(
+            "devctl.cli.ai_kit.apply_protocols",
+            return_value=("v1", [], [], []),
+        ),
+        patch("devctl.cli.ai_kit.register_repo") as reg,
+    ):
+        runner = CliRunner()
+        r = runner.invoke(
+            cli,
+            ["ai-kit", "setup", "--repo", "https://github.com/org/kit", "--branch", "feature-x"],
+            env=_env(tmp_path),
+        )
+    assert r.exit_code == 0
+    pull.assert_called_once_with("https://github.com/org/kit", branch="feature-x")
+    reg.assert_called_once()
+    assert reg.call_args.kwargs.get("branch") == "feature-x"
+    assert "branch feature-x" in r.output
+
+
 def test_cli_ai_kit_sync_background_no_repos(tmp_path: Path) -> None:
     with patch("devctl.core.config_sync.perform_config_sync", return_value=[]):
         runner = CliRunner()

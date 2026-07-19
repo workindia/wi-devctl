@@ -12,6 +12,24 @@ from devctl.utils.logging import log_verbose
 from devctl.utils.shell import expand_path
 
 
+def _repo_label(slug: str, info: dict) -> str:
+    """Format repo slug with optional branch for logs."""
+    branch = info.get("branch")
+    if branch:
+        return f"{slug}@{branch}"
+    return slug
+
+
+def _repo_labels(repos: dict, slugs: list[str] | None = None) -> str:
+    """Comma-separated repo labels, optionally filtered to slugs."""
+    labels: list[str] = []
+    for slug, info in repos.items():
+        if slugs is not None and slug not in slugs:
+            continue
+        labels.append(_repo_label(slug, info))
+    return ", ".join(labels)
+
+
 @click.group()
 def ai_kit() -> None:
     """AI kit - sync AI tooling configs from repos."""
@@ -20,17 +38,22 @@ def ai_kit() -> None:
 
 @ai_kit.command()
 @click.option("--repo", "repo_url", required=True, help="Repository URL to clone")
-def setup(repo_url: str) -> None:
+@click.option("--branch", default=None, help="Git branch to track (default: repo default branch)")
+def setup(repo_url: str, branch: str | None) -> None:
     """Clone repo and apply protocols."""
     try:
+        effective_branch = branch.strip() if branch and branch.strip() else None
         log_verbose(f"Setting up repo: {repo_url}")
-        repo_path = clone_or_pull(repo_url)
+        repo_path = clone_or_pull(repo_url, branch=effective_branch)
         slug = url_to_slug(repo_url)
         log_verbose(f"Applying protocols from {repo_path}")
         version, _, missing_obl, missing_rec = apply_protocols(repo_path, slug, do_backup=True)
         log_verbose(f"Registering {slug} in state")
-        register_repo(slug, repo_url, repo_path, version)
-        click.echo(f"Setup complete: {slug} (v{version})")
+        register_repo(slug, repo_url, repo_path, version, branch=effective_branch)
+        if effective_branch:
+            click.echo(f"Setup complete: {slug} (v{version}, branch {effective_branch})")
+        else:
+            click.echo(f"Setup complete: {slug} (v{version})")
         click.echo("Tip: run 'devctl ai-kit install-background-sync' to auto-pull updates hourly and get notified.")
         if missing_obl:
             click.echo("Missing obligations:", err=True)
@@ -71,11 +94,14 @@ def sync(background: bool, verbose: bool) -> None:
         if not repos:
             click.echo(f"[{ts}] devctl ai-kit sync: no managed repos")
         elif updated:
+            labels = _repo_labels(repos, updated)
             click.echo(
-                f"[{ts}] devctl ai-kit sync: updated {len(updated)} repo(s): {', '.join(updated)}"
+                f"[{ts}] devctl ai-kit sync: updated {len(updated)} repo(s): {labels}"
             )
         else:
-            click.echo(f"[{ts}] devctl ai-kit sync: ok, {len(repos)} repo(s) up to date")
+            labels = _repo_labels(repos)
+            suffix = f" ({labels})" if labels else ""
+            click.echo(f"[{ts}] devctl ai-kit sync: ok, {len(repos)} repo(s) up to date{suffix}")
     else:
         if not list_repos():
             click.echo("No managed repos. Run 'devctl ai-kit setup --repo <url>' first.")
@@ -154,10 +180,11 @@ def update(repo_url: str | None) -> None:
                 click.echo(f"Skipping {slug}: missing url or path", err=True)
                 continue
             log_verbose(f"Updating {slug}: {url}")
-            repo_path = clone_or_pull(url)
+            tracked_branch = info.get("branch")
+            repo_path = clone_or_pull(url, branch=tracked_branch)
             log_verbose(f"Re-applying protocols for {slug}")
             version, _, missing_obl, missing_rec = apply_protocols(repo_path, slug, do_backup=True)
-            register_repo(slug, url, repo_path, version)
+            register_repo(slug, url, repo_path, version, branch=tracked_branch)
             click.echo(f"Updated {slug} (v{version})")
             if missing_obl:
                 click.echo(f"  Missing obligations: {len(missing_obl)}", err=True)
@@ -209,6 +236,8 @@ def status(repo_url: str | None) -> None:
         click.echo(f"{slug}:")
         click.echo(f"  path:   {path}")
         click.echo(f"  version: {version}")
+        if info.get("branch"):
+            click.echo(f"  branch: {info['branch']}")
         if path.exists():
             try:
                 log_verbose(f"Loading protocols from {path}")

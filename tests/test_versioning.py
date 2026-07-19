@@ -54,6 +54,26 @@ def test_register_and_list_repos(isolated_state: Path, tmp_path: Path) -> None:
     assert "org-kit" in data["repos"]
 
 
+def test_register_repo_stores_branch(isolated_state: Path, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    register_repo("org-kit", "https://example.com/org-kit.git", repo, "v1", branch="feature-x")
+    repos = list_repos()
+    assert repos["org-kit"]["branch"] == "feature-x"
+    data = json.loads(isolated_state.read_text())
+    assert data["repos"]["org-kit"]["branch"] == "feature-x"
+
+
+def test_register_repo_preserves_existing_branch(isolated_state: Path, tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    register_repo("org-kit", "https://example.com/org-kit.git", repo, "v1", branch="feature-x")
+    register_repo("org-kit", "https://example.com/org-kit.git", repo, "v2")
+    repos = list_repos()
+    assert repos["org-kit"]["version"] == "v2"
+    assert repos["org-kit"]["branch"] == "feature-x"
+
+
 def test_load_state_missing_file(isolated_state: Path) -> None:
     assert not isolated_state.exists()
     s = load_state()

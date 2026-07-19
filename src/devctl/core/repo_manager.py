@@ -38,23 +38,88 @@ def url_to_slug(repo_url: str) -> str:
     return slug or "repo"
 
 
-def clone_or_pull(repo_url: str) -> Path:
+def resolve_default_branch(repo_url: str) -> str:
+    """Return remote default branch name (e.g. main)."""
+    result = subprocess.run(
+        ["git", "ls-remote", "--symref", repo_url, "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    for line in result.stdout.splitlines():
+        if line.startswith("ref:"):
+            ref = line.split()[1]
+            return ref.rsplit("/", 1)[-1]
+    raise RuntimeError(f"Could not resolve default branch for {repo_url}")
+
+
+def _checkout_and_pull(repo_path: Path, branch: str) -> None:
+    """Fetch, checkout branch, and fast-forward pull."""
+    subprocess.run(
+        ["git", "fetch", "origin"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "checkout", branch],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "pull", "--ff-only"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
+
+
+def clone_or_pull(repo_url: str, branch: str | None = None) -> Path:
     """Clone repo or pull if exists. Returns path to repo root."""
     repos_dir = get_repos_dir()
     repos_dir.mkdir(parents=True, exist_ok=True)
 
     slug = url_to_slug(repo_url)
     repo_path = repos_dir / slug
+    effective_branch = branch.strip() if branch and branch.strip() else None
 
     if repo_path.exists():
-        log_verbose(f"Pulling latest: {repo_url}")
-        subprocess.run(
-            ["git", "pull"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
-        log_verbose(f"Pulled to {repo_path}")
+        if effective_branch:
+            log_verbose(f"Pulling latest on {effective_branch}: {repo_url}")
+            _checkout_and_pull(repo_path, effective_branch)
+            log_verbose(f"Updated {repo_path} (branch {effective_branch})")
+        else:
+            log_verbose(f"Pulling latest: {repo_url}")
+            subprocess.run(
+                ["git", "pull"],
+                cwd=repo_path,
+                check=True,
+                capture_output=True,
+            )
+            log_verbose(f"Pulled to {repo_path}")
+    elif effective_branch:
+        log_verbose(f"Cloning {repo_url} (branch {effective_branch}) -> {repo_path}")
+        try:
+            subprocess.run(
+                ["git", "clone", "--branch", effective_branch, repo_url, str(repo_path)],
+                check=True,
+                capture_output=True,
+            )
+        except subprocess.CalledProcessError:
+            log_verbose(f"Clone --branch failed, falling back to checkout {effective_branch}")
+            subprocess.run(
+                ["git", "clone", repo_url, str(repo_path)],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["git", "checkout", effective_branch],
+                cwd=repo_path,
+                check=True,
+                capture_output=True,
+            )
+        log_verbose(f"Cloned to {repo_path}")
     else:
         log_verbose(f"Cloning {repo_url} -> {repo_path}")
         subprocess.run(

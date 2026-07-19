@@ -47,17 +47,29 @@ def get_repo_version(repo_path: Path) -> str:
     return "unknown"
 
 
-def register_repo(slug: str, url: str, path: Path, version: str) -> None:
+def register_repo(
+    slug: str,
+    url: str,
+    path: Path,
+    version: str,
+    branch: str | None = None,
+) -> None:
     """Register repo in state.json."""
     state = load_state()
     if "repos" not in state:
         state["repos"] = {}
-    state["repos"][slug] = {
+    existing = state["repos"].get(slug, {})
+    entry: dict[str, Any] = {
         "url": url,
         "path": str(path),
         "version": version,
         "last_updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
+    if branch is not None:
+        entry["branch"] = branch
+    elif "branch" in existing:
+        entry["branch"] = existing["branch"]
+    state["repos"][slug] = entry
     save_state(state)
 
 

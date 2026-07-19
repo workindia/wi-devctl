@@ -11,6 +11,12 @@
 #   export DEVCTL_AI_KIT_REPO=https://github.com/your-org/ai-collab-kit
 #   export DEVCTL_AI_KIT_BACKGROUND_SYNC=1   # optional: launchd (macOS) / cron (Linux)
 #   curl -fsSL ... | bash
+#
+# Build devctl from a git branch instead of downloading a release:
+#   export DEVCTL_BRANCH=feature/my-branch
+#   export DEVCTL_AI_KIT_REPO=https://github.com/your-org/ai-collab-kit   # optional
+#   export DEVCTL_AI_KIT_REPO_BRANCH=feature/configs                      # optional
+#   curl -fsSL ... | bash
 # Private collab repo: ensure git can clone it (SSH key or credential helper); GITHUB_TOKEN here
 # only affects downloading devctl, not git clone.
 set -e
@@ -189,6 +195,77 @@ download_and_install() {
   }
 }
 
+build_devctl_from_branch() {
+  local branch="$1" output="$2"
+  local build_dir clone_url built
+
+  if ! command -v git >/dev/null 2>&1; then
+    echo "❌ git is required to build from branch. Install git and re-run." >&2
+    exit 1
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "❌ python3 is required to build from branch." >&2
+    exit 1
+  fi
+  if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' 2>/dev/null; then
+    echo "❌ Python 3.11+ is required to build from branch." >&2
+    exit 1
+  fi
+  if ! python3 -m pip --version >/dev/null 2>&1; then
+    echo "❌ pip is required to build from branch." >&2
+    exit 1
+  fi
+
+  build_dir=$(mktemp -d)
+  clone_url="https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}.git"
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    clone_url="https://${GITHUB_TOKEN}@github.com/${GITHUB_OWNER}/${GITHUB_REPO}.git"
+  fi
+
+  echo "  → Cloning ${GITHUB_OWNER}/${GITHUB_REPO} (branch: ${branch})..." >&2
+  if ! git clone --depth 1 --branch "$branch" "$clone_url" "$build_dir/src" 2>&1; then
+    echo "  → Shallow clone failed, trying full clone..." >&2
+    rm -rf "$build_dir/src"
+    if ! git clone "$clone_url" "$build_dir/src" 2>&1; then
+      rm -rf "$build_dir"
+      echo "❌ Clone failed. For private repos: export GITHUB_TOKEN=ghp_xxx" >&2
+      exit 1
+    fi
+    if ! git -C "$build_dir/src" checkout "$branch" 2>&1; then
+      rm -rf "$build_dir"
+      echo "❌ Checkout failed for branch: ${branch}" >&2
+      exit 1
+    fi
+  fi
+
+  echo "  → Building binary (PyInstaller)..." >&2
+  if ! (
+    cd "$build_dir/src"
+    python3 -m pip install -q setuptools wheel pyinstaller pyyaml click certifi
+    python3 -m pip install -q -e . --no-build-isolation
+    pyinstaller --onefile --name devctl --paths src \
+      --hidden-import certifi --collect-all certifi \
+      src/devctl/cli/main.py
+  ); then
+    rm -rf "$build_dir"
+    echo "❌ Build failed." >&2
+    exit 1
+  fi
+
+  built="$build_dir/src/dist/devctl"
+  [[ "$output" == *.exe ]] && built="${built}.exe"
+  if [ ! -f "$built" ]; then
+    rm -rf "$build_dir"
+    echo "❌ Built binary not found at $built" >&2
+    exit 1
+  fi
+
+  chmod +x "$built"
+  mv "$built" "$output"
+  rm -rf "$build_dir"
+  echo "✅ Built and installed to $output" >&2
+}
+
 main() {
   TOTAL_STEPS=5
   [ -n "${DEVCTL_AI_KIT_REPO:-}" ] && TOTAL_STEPS=$((TOTAL_STEPS + 1))
@@ -209,22 +286,27 @@ main() {
   local asset_name="devctl-${platform}"
   [[ "$platform" == windows* ]] && asset_name="${asset_name}.exe"
 
-  log_step "Resolving download URL"
-  local url
-  url=$(get_download_url "$asset_name")
+  if [ -n "${DEVCTL_BRANCH:-}" ]; then
+    log_step "Building from branch (DEVCTL_BRANCH=${DEVCTL_BRANCH})"
+    build_devctl_from_branch "${DEVCTL_BRANCH}" "${INSTALL_DIR}/${binary_name}"
+  else
+    log_step "Resolving download URL"
+    local url
+    url=$(get_download_url "$asset_name")
 
-  local tmpfile
-  tmpfile=$(mktemp)
-  trap 'rm -f "$tmpfile"' EXIT
+    local tmpfile
+    tmpfile=$(mktemp)
+    trap 'rm -f "$tmpfile"' EXIT
 
-  log_step "Downloading binary"
-  download_and_install "$url" "$tmpfile"
+    log_step "Downloading binary"
+    download_and_install "$url" "$tmpfile"
 
-  log_step "Installing"
-  chmod +x "$tmpfile"
-  mv "$tmpfile" "${INSTALL_DIR}/${binary_name}"
+    log_step "Installing"
+    chmod +x "$tmpfile"
+    mv "$tmpfile" "${INSTALL_DIR}/${binary_name}"
 
-  echo "✅ Installed to ${INSTALL_DIR}/${binary_name}" >&2
+    echo "✅ Installed to ${INSTALL_DIR}/${binary_name}" >&2
+  fi
 
   # Persist PATH for ~/.local/bin fallback (standard locations are already on PATH)
   if [ "$INSTALL_DIR" = "$HOME/.local/bin" ]; then
@@ -253,7 +335,11 @@ main() {
       echo "   $devctl_bin ai-kit setup --repo <url>" >&2
       exit 1
     fi
-    if ! "$devctl_bin" ai-kit setup --repo "$DEVCTL_AI_KIT_REPO"; then
+    local setup_args=(ai-kit setup --repo "$DEVCTL_AI_KIT_REPO")
+    if [ -n "${DEVCTL_AI_KIT_REPO_BRANCH:-}" ]; then
+      setup_args+=(--branch "$DEVCTL_AI_KIT_REPO_BRANCH")
+    fi
+    if ! "$devctl_bin" "${setup_args[@]}"; then
       echo "❌ ai-kit setup failed." >&2
       exit 1
     fi

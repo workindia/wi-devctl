@@ -93,14 +93,15 @@ def perform_config_sync(
 
         try:
             log_verbose(f"config sync: checking {slug}")
+            tracked_branch = info.get("branch")
             if not fetch_and_has_updates(repo_path):
                 log_verbose(f"config sync: {slug} already up to date")
                 continue
 
             log_verbose(f"Config sync: {slug} has new commits, pulling and re-applying")
-            clone_or_pull(url)
+            clone_or_pull(url, branch=tracked_branch)
             version, _, _obl, _rec = apply_protocols(repo_path, slug, do_backup=True)
-            register_repo(slug, url, repo_path, version)
+            register_repo(slug, url, repo_path, version, branch=tracked_branch)
             updated_slugs.append(slug)
         except Exception as e:
             log_error(f"Config sync failed for {slug}: {e}")

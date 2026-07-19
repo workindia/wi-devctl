@@ -54,7 +54,13 @@ def test_perform_config_sync_pulls_and_notifies(sync_tmp_paths: None, tmp_path: 
     with (
         patch(
             "devctl.core.config_sync.list_repos",
-            return_value={"my-slug": {"url": "https://git.example/repo.git", "path": str(repo)}},
+            return_value={
+                "my-slug": {
+                    "url": "https://git.example/repo.git",
+                    "path": str(repo),
+                    "branch": "feature-x",
+                }
+            },
         ),
         patch("devctl.core.config_sync.fetch_and_has_updates", return_value=True),
         patch("devctl.core.config_sync.clone_or_pull") as pull,
@@ -65,11 +71,12 @@ def test_perform_config_sync_pulls_and_notifies(sync_tmp_paths: None, tmp_path: 
         patch("devctl.core.config_sync.register_repo") as reg,
         patch("devctl.utils.notify.send_notification") as notify,
     ):
-        pull.side_effect = lambda url: repo
+        pull.side_effect = lambda url, branch=None: repo
         out = perform_config_sync(force=True, notify=True)
         assert out == ["my-slug"]
-        pull.assert_called_once()
+        pull.assert_called_once_with("https://git.example/repo.git", branch="feature-x")
         reg.assert_called_once()
+        assert reg.call_args.kwargs.get("branch") == "feature-x"
         notify.assert_called_once()
 
 

@@ -107,7 +107,27 @@ curl -fsSL https://raw.githubusercontent.com/WorkIndia-Private/wi-devctl/main/in
 | `DEVCTL_AI_KIT_REPO` | Run `devctl ai-kit setup --repo <url>` after install (**git** required on `PATH`) |
 | `DEVCTL_AI_KIT_BACKGROUND_SYNC=1` | Then run `devctl ai-kit install-background-sync` (macOS / Linux only; skipped elsewhere) |
 
-`GITHUB_TOKEN` used only for **curl** when fetching `install.sh` or release assets does **not** configure `git clone` for your config repo. Use SSH or a git credential helper for private repos.
+### Build devctl from a git branch
+
+When `DEVCTL_BRANCH` is set, `install.sh` **skips the release download** and builds devctl locally from that branch (requires **git**, **Python 3.11+**, **pip**, and PyInstaller build deps). Optional ai-kit setup and background sync use the same env vars as the release install.
+
+```bash
+export DEVCTL_BRANCH=feature/my-devctl-branch
+export DEVCTL_AI_KIT_REPO=https://github.com/your-org/your-ai-config-repo
+export DEVCTL_AI_KIT_REPO_BRANCH=feature/configs   # optional; omit for repo default branch
+export DEVCTL_AI_KIT_BACKGROUND_SYNC=1
+curl -fsSL https://raw.githubusercontent.com/WorkIndia-Private/wi-devctl/main/install.sh | bash
+```
+
+| Variable | Effect |
+|----------|--------|
+| `DEVCTL_BRANCH` | Build devctl from this git branch instead of downloading a release |
+| `DEVCTL_AI_KIT_REPO` | Same as release install — run `ai-kit setup` after the binary is installed |
+| `DEVCTL_AI_KIT_REPO_BRANCH` | Pass `--branch` to `ai-kit setup`; omit to use the repo's default branch |
+
+When a repo branch is pinned, it is stored in `~/.devctl/state.json` and included in each `~/.devctl/logs/background-sync.log` line (e.g. `org-kit@feature/configs`).
+
+`GITHUB_TOKEN` used only for **curl** when fetching `install.sh` or release assets does **not** configure `git clone` for your config repo. Use SSH or a git credential helper for private repos. For branch builds of private **wi-devctl**, `GITHUB_TOKEN` is also used for the source clone.
 
 Combine with a private **wi-devctl** install and one-shot ai-kit:
 
@@ -137,6 +157,7 @@ curl -fsSL \
 
 ```bash
 devctl ai-kit setup --repo <url>              # Clone / pull config repo, apply protocols
+devctl ai-kit setup --repo <url> --branch <b> # Pin a git branch for sync
 devctl ai-kit install-background-sync         # Hourly sync: launchd (macOS) or cron (Linux)
 devctl ai-kit uninstall-background-sync       # Remove that scheduled job
 devctl ai-kit sync                            # Run sync now; notifies when pulls happen
@@ -162,6 +183,20 @@ protocols:
     target: ~/.cursor
     obligations: [rules/security.json]
     recommendations: [skills/debugging.md]
+  - name: python-deps
+    type: script_run
+    script:   |
+      set -euo pipefail
+      VENV_DIR="$HOME/.wi_venv"
+      REPO_DIR="$(pwd)"
+
+      if [[ ! -d "$VENV_DIR" ]]; then
+        python3 -m venv "$VENV_DIR"
+      fi
+
+      "$VENV_DIR/bin/pip" install -U pip
+      "$VENV_DIR/bin/pip" install -r "$REPO_DIR/requirements.txt"
+
 ```
 
 2. Run setup:
@@ -182,12 +217,15 @@ devctl ai-kit install-background-sync
 
 | Field | Description |
 |-------|-------------|
+| `script` | Shell command to run for `script_run` protocols (executed from the repo root) |
 | `source` | Path in repo (relative to root) |
 | `target` | Local path (`~` expanded) |
 | `obligations` | Required files under target (reported if missing) |
 | `recommendations` | Optional files (reported if missing) |
 
 `protocol.yaml` or `protocol.yml` must live at the **root** of the repo you sync from.
+
+`file_sync` copies files from `source` to `target`. `script_run` runs `script` in the cloned repo root, which is useful for repo-local bootstrap steps such as `python3 -m pip install -r requirements.txt`.
 
 ## Domains & Use Cases
 
@@ -201,7 +239,7 @@ A **domain** is a grouped set of CLI commands for a specific use case. Each doma
 
 ### How use cases work
 
-All domains share the same flow: clone repo → parse `protocol.yaml` → apply protocols → track state. The protocol engine supports multiple types (currently `file_sync`; extensible to `env_sync`, `script_run`, etc.). Domain-specific logic sits on top of this core.
+All domains share the same flow: clone repo → parse `protocol.yaml` → apply protocols → track state. The protocol engine currently supports `file_sync` and `script_run`; more protocol types can be added later. Domain-specific logic sits on top of this core.
 
 | Use case | Domain | What it does | Example |
 |----------|--------|---------------|---------|
@@ -235,7 +273,9 @@ Fork the repo and add domains for your org — no hardcoded URLs; each domain wo
 | `DEVCTL_BACKUP_RETENTION_COUNT` | Number of config backups to keep per repo slug (default: 3). Set to `0` to disable pruning |
 | `DEVCTL_BACKUP_RETENTION_DISABLED` | Set to `1` to keep all backups (no automatic pruning) |
 | `DEVCTL_AI_KIT_REPO` | *(install.sh only)* If set, run `ai-kit setup` after binary install |
+| `DEVCTL_AI_KIT_REPO_BRANCH` | *(install.sh only)* Git branch for ai-kit setup; omit for repo default branch |
 | `DEVCTL_AI_KIT_BACKGROUND_SYNC` | *(install.sh only)* Set to `1` to run `install-background-sync` after setup |
+| `DEVCTL_BRANCH` | *(install.sh only)* Build devctl from this git branch instead of downloading a release |
 
 ### Background sync and notifications
 

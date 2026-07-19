@@ -6,7 +6,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from devctl.core.repo_manager import fetch_and_has_updates, url_to_slug
+from devctl.core.repo_manager import (
+    clone_or_pull,
+    fetch_and_has_updates,
+    resolve_default_branch,
+    url_to_slug,
+)
 
 
 def test_url_to_slug_github() -> None:
@@ -75,3 +80,48 @@ def test_fetch_and_has_updates_false_on_fetch_failure(tmp_path: Path) -> None:
     run = MagicMock(side_effect=subprocess.CalledProcessError(1, "git"))
     with patch("devctl.core.repo_manager.subprocess.run", run):
         assert fetch_and_has_updates(tmp_path) is False
+
+
+def test_resolve_default_branch() -> None:
+    proc = MagicMock()
+    proc.stdout = "ref: refs/heads/main\tHEAD\n"
+    with patch("devctl.core.repo_manager.subprocess.run", return_value=proc):
+        assert resolve_default_branch("https://github.com/org/repo.git") == "main"
+
+
+def test_clone_or_pull_with_branch_new_clone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repos_dir = tmp_path / "repos"
+    monkeypatch.setattr("devctl.core.repo_manager.get_repos_dir", lambda: repos_dir)
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    with patch("devctl.core.repo_manager.subprocess.run", side_effect=fake_run):
+        path = clone_or_pull("https://github.com/org/repo.git", branch="feature-x")
+
+    assert path == repos_dir / "org-repo"
+    assert ["git", "clone", "--branch", "feature-x", "https://github.com/org/repo.git", str(path)] in [
+        c for c in calls
+    ]
+
+
+def test_clone_or_pull_with_branch_existing_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repos_dir = tmp_path / "repos"
+    repo_path = repos_dir / "org-repo"
+    repo_path.mkdir(parents=True)
+    monkeypatch.setattr("devctl.core.repo_manager.get_repos_dir", lambda: repos_dir)
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(cmd)
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    with patch("devctl.core.repo_manager.subprocess.run", side_effect=fake_run):
+        path = clone_or_pull("https://github.com/org/repo.git", branch="feature-x")
+
+    assert path == repo_path
+    assert ["git", "fetch", "origin"] in calls
+    assert ["git", "checkout", "feature-x"] in calls
+    assert ["git", "pull", "--ff-only"] in calls

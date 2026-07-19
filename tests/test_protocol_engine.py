@@ -1,6 +1,5 @@
 """Tests for protocol_engine."""
 
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -37,6 +36,28 @@ protocols:
     assert p.target == "~/.cursor"
     assert p.obligations == ["rules/security.json"]
     assert p.recommendations == ["skills/debugging.md"]
+
+
+def test_load_protocols_script_run(tmp_path: Path) -> None:
+    """Load a script_run protocol without source/target fields."""
+    (tmp_path / "protocol.yaml").write_text(
+        """
+version: v1
+protocols:
+  - name: python-deps
+    type: script_run
+    script: python3 -m pip install -r requirements.txt
+"""
+    )
+    version, protocols = load_protocols(tmp_path)
+    assert version == "v1"
+    assert len(protocols) == 1
+    p = protocols[0]
+    assert p.name == "python-deps"
+    assert p.type == "script_run"
+    assert p.script == "python3 -m pip install -r requirements.txt"
+    assert p.source == ""
+    assert p.target == ""
 
 
 def test_load_protocols_yml(tmp_path: Path) -> None:
@@ -94,7 +115,9 @@ def test_execute_protocol_file_sync(tmp_path: Path) -> None:
         recommendations=[],
     )
     repo_path = tmp_path
-    missing_obl, missing_rec = execute_protocol(protocol, repo_path, "test", do_backup=False)
+    missing_obl, missing_rec = execute_protocol(
+        protocol, repo_path, "test", do_backup=False
+    )
 
     assert (target / "file.txt").exists()
     assert (target / "file.txt").read_text() == "hello"
@@ -143,6 +166,38 @@ def test_execute_protocol_unknown_type(tmp_path: Path) -> None:
         recommendations=[],
     )
     with pytest.raises(ValueError, match="Unknown protocol type"):
+        execute_protocol(protocol, tmp_path, "test", do_backup=False)
+
+
+def test_execute_protocol_script_run(tmp_path: Path) -> None:
+    """Execute script_run protocol from the repo root."""
+    (tmp_path / "marker.txt").write_text("ok")
+    protocol = Protocol(
+        name="deps",
+        type="script_run",
+        script=(
+            'python3 -c "from pathlib import Path; '
+            "assert Path('marker.txt').read_text() == 'ok'\""
+        ),
+    )
+
+    missing_obl, missing_rec = execute_protocol(
+        protocol, tmp_path, "test", do_backup=False
+    )
+
+    assert missing_obl == []
+    assert missing_rec == []
+
+
+def test_execute_protocol_script_run_failure(tmp_path: Path) -> None:
+    """Raise when script_run exits non-zero."""
+    protocol = Protocol(
+        name="deps",
+        type="script_run",
+        script='python3 -c "import sys; sys.exit(2)"',
+    )
+
+    with pytest.raises(RuntimeError, match="script_run failed"):
         execute_protocol(protocol, tmp_path, "test", do_backup=False)
 
 
@@ -223,7 +278,23 @@ protocols:
     type: file_sync
 """
     )
-    with pytest.raises(ValueError, match="requires name, type, source, target"):
+    with pytest.raises(
+        ValueError, match="requires source and target for file_sync"
+    ):
+        load_protocols(tmp_path)
+
+
+def test_load_protocols_script_run_requires_script(tmp_path: Path) -> None:
+    """script_run protocols must define a script."""
+    (tmp_path / "protocol.yaml").write_text(
+        """
+version: v1
+protocols:
+  - name: deps
+    type: script_run
+"""
+    )
+    with pytest.raises(ValueError, match="requires script for script_run"):
         load_protocols(tmp_path)
 
 
@@ -252,7 +323,9 @@ protocols:
     (tmp_path / "s2").mkdir()
     (tmp_path / "s2" / "g.txt").write_text("b")
 
-    ver, protos, miss_o, miss_r = apply_protocols(tmp_path, "slug", do_backup=False)
+    ver, protos, miss_o, _miss_r = apply_protocols(
+        tmp_path, "slug", do_backup=False
+    )
     assert ver == "v1"
     assert len(protos) == 2
     assert len(miss_o) == 2
