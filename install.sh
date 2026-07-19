@@ -266,6 +266,31 @@ build_devctl_from_branch() {
   echo "✅ Built and installed to $output" >&2
 }
 
+warmup_devctl_binary() {
+  local devctl_bin="$1"
+  # PyInstaller --onefile unpacks on each launch; a light run before setup reduces
+  # first-run extraction flakes (especially right after branch build).
+  echo "  → Warming up binary (--help)..." >&2
+  "$devctl_bin" --help >/dev/null 2>&1 || true
+  sleep 1
+}
+
+run_ai_kit_setup_with_retry() {
+  local devctl_bin="$1"
+  shift
+  local attempt
+  for attempt in 1 2 3; do
+    if "$devctl_bin" "$@"; then
+      return 0
+    fi
+    if [ "$attempt" -lt 3 ]; then
+      echo "  → ai-kit setup failed (attempt ${attempt}/3), retrying in 2s..." >&2
+      sleep 2
+    fi
+  done
+  return 1
+}
+
 main() {
   TOTAL_STEPS=5
   [ -n "${DEVCTL_AI_KIT_REPO:-}" ] && TOTAL_STEPS=$((TOTAL_STEPS + 1))
@@ -339,8 +364,9 @@ main() {
     if [ -n "${DEVCTL_AI_KIT_REPO_BRANCH:-}" ]; then
       setup_args+=(--branch "$DEVCTL_AI_KIT_REPO_BRANCH")
     fi
-    if ! "$devctl_bin" "${setup_args[@]}"; then
-      echo "❌ ai-kit setup failed." >&2
+    warmup_devctl_binary "$devctl_bin"
+    if ! run_ai_kit_setup_with_retry "$devctl_bin" "${setup_args[@]}"; then
+      echo "❌ ai-kit setup failed after 3 attempts." >&2
       exit 1
     fi
     echo "  → ai-kit setup complete" >&2
