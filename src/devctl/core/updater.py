@@ -163,8 +163,10 @@ def perform_update(manifest_url: str | None, force: bool = False) -> Tuple[bool,
 
     has_update, latest_version, download_url = check_for_update(manifest_url)
 
-    if not has_update and not force:
-        return False, latest_version or __version__, None
+    if not has_update:
+        # No update available - return early even if force=True
+        # This prevents infinite loop when already on latest version
+        return False, latest_version or __version__, download_url
 
     if not download_url:
         if force:
