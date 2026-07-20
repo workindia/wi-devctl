@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 from urllib.parse import urlparse
 
-from devctl.utils.logging import log_verbose
+from devctl.utils.logging import log_status, log_verbose
 from devctl.utils.shell import get_repos_dir
 
 
@@ -47,6 +47,7 @@ def clone_or_pull(repo_url: str) -> Path:
     repo_path = repos_dir / slug
 
     if repo_path.exists():
+        log_status(f"Pulling latest from {slug}...")
         log_verbose(f"Pulling latest: {repo_url}")
         subprocess.run(
             ["git", "pull"],
@@ -54,14 +55,17 @@ def clone_or_pull(repo_url: str) -> Path:
             check=True,
             capture_output=True,
         )
+        log_status("Pull complete")
         log_verbose(f"Pulled to {repo_path}")
     else:
+        log_status(f"Cloning {slug}...")
         log_verbose(f"Cloning {repo_url} -> {repo_path}")
         subprocess.run(
             ["git", "clone", repo_url, str(repo_path)],
             check=True,
             capture_output=True,
         )
+        log_status("Clone complete")
         log_verbose(f"Cloned to {repo_path}")
 
     return repo_path

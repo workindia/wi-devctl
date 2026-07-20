@@ -3,13 +3,56 @@
 import os
 import re
 import shutil
+import time
 from collections import defaultdict
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
-from devctl.utils.logging import log_verbose
+from devctl.utils.logging import ProgressBar, log_status, log_verbose
 from devctl.utils.shell import get_backups_dir
+
+
+def _format_size(size_bytes: int) -> str:
+    """Format bytes as human-readable size."""
+    for unit in ("B", "KB", "MB", "GB"):
+        if size_bytes < 1024:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024
+    return f"{size_bytes:.1f} TB"
+
+
+def _get_dir_size(path: Path) -> int:
+    """Get total size of directory in bytes."""
+    total = 0
+    try:
+        for entry in path.rglob("*"):
+            if entry.is_file():
+                total += entry.stat().st_size
+    except (OSError, PermissionError):
+        pass
+    return total
+
+
+def _copytree_with_progress(
+    src: Path,
+    dst: Path,
+    total_size: int,
+) -> None:
+    """Copy directory tree with progress bar."""
+    progress = ProgressBar(total_size, desc="Copying")
+
+    def copy_with_progress(src_file: str, dst_file: str) -> None:
+        """Copy a single file and update progress."""
+        shutil.copy2(src_file, dst_file)
+        try:
+            size = os.path.getsize(src_file)
+            progress.update(size)
+        except OSError:
+            pass
+
+    shutil.copytree(src, dst, copy_function=copy_with_progress)
+    progress.finish()
 
 _BACKUP_TIMESTAMP_SUFFIX = re.compile(r"^(.+)-(\d{8}T\d{6}Z)$")
 _DEFAULT_RETENTION_COUNT = 3
@@ -94,12 +137,22 @@ def backup_target(target_path: Path, slug: str) -> Path | None:
 
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     backup_path = backups_dir / f"{slug}-{timestamp}"
-    log_verbose(f"Backup created at {backup_path}")
 
     if target_path.is_dir():
-        shutil.copytree(target_path, backup_path)
+        size = _get_dir_size(target_path)
+        size_str = _format_size(size)
+        log_status(f"Backing up {target_path} ({size_str})...")
+        start = time.monotonic()
+        _copytree_with_progress(target_path, backup_path, size)
+        elapsed = time.monotonic() - start
+        log_status(f"Backup complete ({elapsed:.1f}s) → {backup_path.name}")
     else:
+        log_status(f"Backing up {target_path}...")
+        start = time.monotonic()
         backup_path.mkdir(parents=True, exist_ok=True)
         shutil.copy2(target_path, backup_path / target_path.name)
+        elapsed = time.monotonic() - start
+        log_status(f"Backup complete ({elapsed:.1f}s)")
 
+    log_verbose(f"Backup saved to {backup_path}")
     return backup_path

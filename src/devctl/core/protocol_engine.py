@@ -7,7 +7,7 @@ from typing import Any
 import yaml
 
 from devctl.core.backup import backup_target, prune_backups
-from devctl.utils.logging import log_verbose
+from devctl.utils.logging import log_status, log_verbose
 from devctl.utils.shell import expand_path
 from devctl.utils.yaml_loader import load_yaml
 
@@ -92,14 +92,18 @@ def _file_sync(
     if source_path.is_dir():
         import shutil
 
+        log_status(f"Syncing {source_path.name}/ → {target_path}")
         log_verbose(f"Merging directory {source_path} -> {target_path} (existing files preserved)")
         shutil.copytree(source_path, target_path, dirs_exist_ok=True)
+        log_status("Sync complete")
     else:
+        log_status(f"Syncing {source_path.name} → {target_path}")
         log_verbose(f"Copying file {source_path} -> {target_path}")
         target_path.parent.mkdir(parents=True, exist_ok=True)
         import shutil
 
         shutil.copy2(source_path, target_path)
+        log_status("Sync complete")
 
     return [], []
 
@@ -144,11 +148,13 @@ def apply_protocols(
 ) -> tuple[str, list[Protocol], list[str], list[str]]:
     """Load and apply all protocols. Returns (version, protocols, missing_obligations, missing_recommendations)."""
     version, protocols = load_protocols(repo_path)
+    log_status(f"Applying {len(protocols)} protocol(s)...")
     log_verbose(f"Applying {len(protocols)} protocol(s)")
     all_missing_obl: list[str] = []
     all_missing_rec: list[str] = []
 
-    for protocol in protocols:
+    for i, protocol in enumerate(protocols, 1):
+        log_status(f"[{i}/{len(protocols)}] Protocol '{protocol.name}' ({protocol.type})")
         log_verbose(f"Executing protocol '{protocol.name}' ({protocol.type}): {protocol.source} -> {protocol.target}")
         obl, rec = execute_protocol(protocol, repo_path, slug, do_backup)
         all_missing_obl.extend(obl)
