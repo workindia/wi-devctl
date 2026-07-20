@@ -30,3 +30,8 @@ def log_warn(msg: str) -> None:
 def log_info(msg: str) -> None:
     """Log info to stderr (for non-interactive output)."""
     print(f"devctl: {msg}", file=sys.stderr, flush=True)
+
+
+def log_status(msg: str) -> None:
+    """Log progress/status to stderr (always shown, for long-running operations)."""
+    print(f"  → {msg}", file=sys.stderr, flush=True)
