@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
-from devctl.utils.logging import log_status, log_verbose
+from devctl.utils.logging import ProgressBar, log_status, log_verbose
 from devctl.utils.shell import get_backups_dir
 
 
@@ -32,6 +32,27 @@ def _get_dir_size(path: Path) -> int:
     except (OSError, PermissionError):
         pass
     return total
+
+
+def _copytree_with_progress(
+    src: Path,
+    dst: Path,
+    total_size: int,
+) -> None:
+    """Copy directory tree with progress bar."""
+    progress = ProgressBar(total_size, desc="Copying")
+
+    def copy_with_progress(src_file: str, dst_file: str) -> None:
+        """Copy a single file and update progress."""
+        shutil.copy2(src_file, dst_file)
+        try:
+            size = os.path.getsize(src_file)
+            progress.update(size)
+        except OSError:
+            pass
+
+    shutil.copytree(src, dst, copy_function=copy_with_progress)
+    progress.finish()
 
 _BACKUP_TIMESTAMP_SUFFIX = re.compile(r"^(.+)-(\d{8}T\d{6}Z)$")
 _DEFAULT_RETENTION_COUNT = 3
@@ -122,7 +143,7 @@ def backup_target(target_path: Path, slug: str) -> Path | None:
         size_str = _format_size(size)
         log_status(f"Backing up {target_path} ({size_str})...")
         start = time.monotonic()
-        shutil.copytree(target_path, backup_path)
+        _copytree_with_progress(target_path, backup_path, size)
         elapsed = time.monotonic() - start
         log_status(f"Backup complete ({elapsed:.1f}s) → {backup_path.name}")
     else:
