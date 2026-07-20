@@ -70,7 +70,17 @@ def _record_update_check() -> None:
 
 
 def _fetch_manifest(manifest_url: str | None) -> dict | None:
-    """Fetch update manifest. Falls back to GitHub Releases API. Returns None on failure."""
+    """Fetch update manifest.
+
+    Strategy (to avoid GitHub API rate limits):
+    1. If DEVCTL_MANIFEST_URL is set, use that directly
+    2. Otherwise, try the direct release asset URL (no rate limit)
+    3. Fall back to GitHub Releases API only if direct URL fails
+    """
+    repo = os.environ.get("DEVCTL_GITHUB_REPO", "wi-devctl")
+    owner = os.environ.get("DEVCTL_GITHUB_OWNER", "workindia")
+
+    # 1. Explicit manifest URL from env var
     if manifest_url:
         try:
             with open_url(_make_request(manifest_url), timeout=10) as resp:
@@ -79,9 +89,15 @@ def _fetch_manifest(manifest_url: str | None) -> dict | None:
             log_error(f"Failed to fetch manifest from {manifest_url}: {e}")
             return None
 
-    # Default: GitHub Releases API
-    repo = os.environ.get("DEVCTL_GITHUB_REPO", "wi-devctl")
-    owner = os.environ.get("DEVCTL_GITHUB_OWNER", "WorkIndia-Private")
+    # 2. Try direct release asset URL first (no rate limit)
+    direct_url = f"https://github.com/{owner}/{repo}/releases/latest/download/manifest.json"
+    try:
+        with open_url(_make_request(direct_url), timeout=10) as resp:
+            return json.loads(resp.read().decode())
+    except Exception:
+        pass  # Fall through to API
+
+    # 3. Fallback: GitHub Releases API (has rate limits)
     api_url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
     try:
         with open_url(_make_request(api_url), timeout=10) as resp:
