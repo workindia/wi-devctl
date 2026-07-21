@@ -258,3 +258,162 @@ protocols:
     assert len(miss_o) == 2
     assert any("missing1.txt" in m for m in miss_o)
     assert any("missing2.txt" in m for m in miss_o)
+
+
+def test_execute_protocol_symlink_sync_create(tmp_path: Path) -> None:
+    """symlink_sync creates a directory symlink to source."""
+    source = tmp_path / "common" / "skills"
+    source.mkdir(parents=True)
+    (source / "demo").mkdir()
+    (source / "demo" / "SKILL.md").write_text("hi")
+    target = tmp_path / "home" / "skills"
+
+    protocol = Protocol(
+        name="skills",
+        type="symlink_sync",
+        source="common/skills",
+        target=str(target),
+        obligations=[],
+        recommendations=[],
+    )
+    missing_obl, missing_rec = execute_protocol(protocol, tmp_path, "test", do_backup=False)
+
+    assert target.is_symlink()
+    assert target.resolve() == source.resolve()
+    assert (target / "demo" / "SKILL.md").read_text() == "hi"
+    assert missing_obl == []
+    assert missing_rec == []
+
+
+def test_execute_protocol_symlink_sync_idempotent(tmp_path: Path) -> None:
+    """Re-applying symlink_sync when already correct is a no-op."""
+    source = tmp_path / "common" / "skills"
+    source.mkdir(parents=True)
+    target = tmp_path / "home" / "skills"
+    target.parent.mkdir(parents=True)
+    target.symlink_to(source.resolve())
+
+    protocol = Protocol(
+        name="skills",
+        type="symlink_sync",
+        source="common/skills",
+        target=str(target),
+        obligations=[],
+        recommendations=[],
+    )
+    execute_protocol(protocol, tmp_path, "test", do_backup=False)
+    execute_protocol(protocol, tmp_path, "test", do_backup=False)
+
+    assert target.is_symlink()
+    assert target.resolve() == source.resolve()
+
+
+def test_execute_protocol_symlink_sync_replaces_real_dir(tmp_path: Path) -> None:
+    """symlink_sync replaces a prior real directory (migration from file_sync)."""
+    source = tmp_path / "common" / "skills"
+    source.mkdir(parents=True)
+    (source / "from_common.txt").write_text("common")
+
+    target = tmp_path / "home" / "skills"
+    target.mkdir(parents=True)
+    (target / "old_copy.txt").write_text("stale")
+
+    protocol = Protocol(
+        name="skills",
+        type="symlink_sync",
+        source="common/skills",
+        target=str(target),
+        obligations=[],
+        recommendations=[],
+    )
+    execute_protocol(protocol, tmp_path, "test", do_backup=False)
+
+    assert target.is_symlink()
+    assert target.resolve() == source.resolve()
+    assert (target / "from_common.txt").read_text() == "common"
+    assert not (target / "old_copy.txt").exists()
+
+
+def test_execute_protocol_symlink_sync_repairs_broken_link(tmp_path: Path) -> None:
+    """symlink_sync replaces a broken symlink."""
+    source = tmp_path / "common" / "skills"
+    source.mkdir(parents=True)
+
+    target = tmp_path / "home" / "skills"
+    target.parent.mkdir(parents=True)
+    target.symlink_to(tmp_path / "does-not-exist")
+
+    protocol = Protocol(
+        name="skills",
+        type="symlink_sync",
+        source="common/skills",
+        target=str(target),
+        obligations=[],
+        recommendations=[],
+    )
+    execute_protocol(protocol, tmp_path, "test", do_backup=False)
+
+    assert target.is_symlink()
+    assert target.resolve() == source.resolve()
+
+
+def test_execute_protocol_symlink_sync_retargets_wrong_link(tmp_path: Path) -> None:
+    """symlink_sync replaces a symlink that points at the wrong path."""
+    source = tmp_path / "common" / "skills"
+    source.mkdir(parents=True)
+    wrong = tmp_path / "other"
+    wrong.mkdir()
+
+    target = tmp_path / "home" / "skills"
+    target.parent.mkdir(parents=True)
+    target.symlink_to(wrong.resolve())
+
+    protocol = Protocol(
+        name="skills",
+        type="symlink_sync",
+        source="common/skills",
+        target=str(target),
+        obligations=[],
+        recommendations=[],
+    )
+    execute_protocol(protocol, tmp_path, "test", do_backup=False)
+
+    assert target.is_symlink()
+    assert target.resolve() == source.resolve()
+
+
+def test_check_symlink_integrity(tmp_path: Path) -> None:
+    """check_symlink_integrity reports missing, wrong, and ok states."""
+    from devctl.core.protocol_engine import check_symlink_integrity
+
+    source = tmp_path / "common" / "skills"
+    source.mkdir(parents=True)
+    target = tmp_path / "home" / "skills"
+    protocol = Protocol(
+        name="skills",
+        type="symlink_sync",
+        source="common/skills",
+        target=str(target),
+        obligations=[],
+        recommendations=[],
+    )
+
+    assert check_symlink_integrity(protocol, tmp_path) is not None
+
+    target.parent.mkdir(parents=True)
+    target.mkdir()
+    assert "not a symlink" in (check_symlink_integrity(protocol, tmp_path) or "")
+
+    target.rmdir()
+    target.symlink_to(source.resolve())
+    assert check_symlink_integrity(protocol, tmp_path) is None
+
+    file_sync = Protocol(
+        name="c",
+        type="file_sync",
+        source="common/skills",
+        target=str(tmp_path / "out"),
+        obligations=[],
+        recommendations=[],
+    )
+    assert check_symlink_integrity(file_sync, tmp_path) is None

@@ -47,7 +47,7 @@ Developer control plane CLI — sync and manage developer tooling configurations
 | **CLI** | ai-kit | setup, sync, update, install/uninstall-background-sync, status, doctor |
 | **CLI** | devspace / local | Domain stubs (planned) |
 | **Core** | repo_manager | Clone/pull Git repos, URL → slug |
-| **Core** | protocol_engine | Parse `protocol.yaml`, execute file_sync, etc. |
+| **Core** | protocol_engine | Parse `protocol.yaml`, execute `file_sync` / `symlink_sync`, etc. |
 | **Core** | versioning | Persist repo metadata in `state.json` |
 | **Core** | backup | Snapshot target before overwrite |
 | **Core** | updater | Self-update binary from GitHub releases |
@@ -66,7 +66,8 @@ User: devctl ai-kit setup --repo https://github.com/org/configs
          │                │                        ├──► repo_manager.clone_or_pull()
          │                │                        ├──► protocol_engine.apply_protocols()
          │                │                        │         ├──► backup.backup_target()
-         │                │                        │         └──► file_sync (merge copy)
+         │                │                        │         ├──► file_sync (merge copy)
+         │                │                        │         └──► symlink_sync (shared skills/commands)
          │                │                        └──► versioning.register_repo()
          │                │
          │                └── check wi-devctl releases
@@ -161,7 +162,10 @@ protocols:
     source: .cursor
     target: ~/.cursor
     obligations: [rules/security.json]
-    recommendations: [skills/debugging.md]
+  - name: cursor-skills
+    type: symlink_sync
+    source: .common/skills
+    target: ~/.cursor/skills
 ```
 
 2. Run setup:
@@ -176,18 +180,19 @@ devctl ai-kit setup --repo https://github.com/your-org/ai-configs
 devctl ai-kit install-background-sync
 ```
 
-4. Repo is cloned to `~/.devctl/repos/`, configs are merged into `~/.cursor`.
+4. Repo is cloned to `~/.devctl/repos/`. Vendor config is merge-copied (`file_sync`); shared skills/commands are symlinked (`symlink_sync`).
 
 ## Protocol Reference
 
 | Field | Description |
 |-------|-------------|
+| `type` | `file_sync` (merge copy) or `symlink_sync` (directory symlink to source) |
 | `source` | Path in repo (relative to root) |
 | `target` | Local path (`~` expanded) |
 | `obligations` | Required files under target (reported if missing) |
 | `recommendations` | Optional files (reported if missing) |
 
-`protocol.yaml` or `protocol.yml` must live at the **root** of the repo you sync from.
+Declare `file_sync` entries before `symlink_sync` entries. `protocol.yaml` or `protocol.yml` must live at the **root** of the repo you sync from.
 
 ## Domains & Use Cases
 
@@ -201,11 +206,11 @@ A **domain** is a grouped set of CLI commands for a specific use case. Each doma
 
 ### How use cases work
 
-All domains share the same flow: clone repo → parse `protocol.yaml` → apply protocols → track state. The protocol engine supports multiple types (currently `file_sync`; extensible to `env_sync`, `script_run`, etc.). Domain-specific logic sits on top of this core.
+All domains share the same flow: clone repo → parse `protocol.yaml` → apply protocols → track state. The protocol engine supports `file_sync` and `symlink_sync` (extensible to `env_sync`, `script_run`, etc.). Domain-specific logic sits on top of this core.
 
 | Use case | Domain | What it does | Example |
 |----------|--------|---------------|---------|
-| **AI configs** | ai-kit | Sync `.cursor` rules/skills to `~/.cursor` | Cursor rules, agent skills |
+| **AI configs** | ai-kit | Sync vendor config via `file_sync`; shared skills/commands via `symlink_sync` | Cursor rules, shared agent skills |
 | **Dev environments** | devspace | Define containers/VMs, start Docker/Podman | Dev containers, Colima setup |
 | **Local tooling** | local | Sync env vars, run setup scripts | `.env` files, dev daemons |
 | **Security** | (new domain) | Scan for secrets, enforce policies | Pre-commit hooks, policy configs |
@@ -323,7 +328,7 @@ Run `pytest` from the repo root (uses `pythonpath = ["src"]` in `pyproject.toml`
 
 | Area | File | What it covers |
 |------|------|----------------|
-| **Protocols** | `tests/test_protocol_engine.py` | Load YAML/YML, validation errors, `file_sync`, merge behavior, **obligations / recommendations** present vs missing, unknown type, missing source, `apply_protocols` across multiple protocols |
+| **Protocols** | `tests/test_protocol_engine.py` | Load YAML/YML, validation errors, `file_sync`, `symlink_sync`, merge behavior, **obligations / recommendations** present vs missing, unknown type, missing source, `apply_protocols` across multiple protocols |
 | **Updater** | `tests/test_updater.py` | Manifest / version comparison, platform key shape, `perform_update` rate limit and force paths (no real download) |
 | **Config sync** | `tests/test_config_sync.py` | `perform_config_sync`: no repos, rate limit, pull + notify, skip bad path / no remote updates |
 | **CLI** | `tests/test_cli.py` | `list`, `ai-kit sync`, `update-cli`, `--version`, `devspace`/`local` help (`DEVCTL_SKIP_AUTO_UPDATE=1`, isolated `HOME`) |

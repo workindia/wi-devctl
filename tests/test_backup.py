@@ -102,6 +102,37 @@ def test_backup_target_creates_snapshot(backups_home: Path, tmp_path: Path) -> N
     assert (result / "rules" / "a.md").read_text() == "rule"
 
 
+def test_backup_target_symlink_records_link_only(backups_home: Path, tmp_path: Path) -> None:
+    """Symlink backup stores link metadata without deep-copying the resolved tree."""
+    real = tmp_path / "real"
+    real.mkdir()
+    (real / "big.txt").write_text("content")
+    link = tmp_path / "link"
+    link.symlink_to(real)
+
+    result = backup.backup_target(link, "org-repo")
+
+    assert result is not None
+    assert (result / "SYMLINK_TARGET").read_text(encoding="utf-8") == str(real)
+    assert not (result / "big.txt").exists()
+
+
+def test_backup_target_unique_paths_per_call(backups_home: Path, tmp_path: Path) -> None:
+    """Multiple backups in one run get distinct directory names (microsecond timestamps)."""
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    (a / "x").write_text("a")
+    (b / "y").write_text("b")
+
+    path1 = backup.backup_target(a, "slug")
+    path2 = backup.backup_target(b, "slug")
+
+    assert path1 is not None and path2 is not None
+    assert path1 != path2
+
+
 def test_apply_protocols_prunes_old_backups(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -1,10 +1,11 @@
 """Protocol parsing and execution."""
 
+from __future__ import annotations
+
+import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
-
-import yaml
 
 from devctl.core.backup import backup_target, prune_backups
 from devctl.utils.logging import log_status, log_verbose
@@ -90,8 +91,6 @@ def _file_sync(
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
     if source_path.is_dir():
-        import shutil
-
         log_status(f"Syncing {source_path.name}/ → {target_path}")
         log_verbose(f"Merging directory {source_path} -> {target_path} (existing files preserved)")
         shutil.copytree(source_path, target_path, dirs_exist_ok=True)
@@ -100,12 +99,81 @@ def _file_sync(
         log_status(f"Syncing {source_path.name} → {target_path}")
         log_verbose(f"Copying file {source_path} -> {target_path}")
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        import shutil
-
         shutil.copy2(source_path, target_path)
         log_status("Sync complete")
 
     return [], []
+
+
+def _symlink_points_to(target_path: Path, expected: Path) -> bool:
+    """Return True if target_path is a symlink whose destination resolves to expected."""
+    if not target_path.is_symlink():
+        return False
+    try:
+        return target_path.resolve() == expected.resolve()
+    except OSError:
+        return False
+
+
+def _remove_path(path: Path) -> None:
+    """Remove a file, symlink, or directory tree at path."""
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.is_dir():
+        shutil.rmtree(path)
+    elif path.exists():
+        path.unlink()
+
+
+def _symlink_sync(
+    source_path: Path,
+    target_path: Path,
+    slug: str,
+    do_backup: bool = True,
+) -> tuple[list[str], list[str]]:
+    """Ensure target_path is a symlink to source_path (absolute). Idempotent; migrates real dirs."""
+    expected = source_path.resolve()
+
+    if _symlink_points_to(target_path, expected):
+        log_verbose(f"Symlink already correct: {target_path} -> {expected}")
+        log_status(f"Link ok {target_path.name}/ → {expected}")
+        return [], []
+
+    exists_or_link = target_path.exists() or target_path.is_symlink()
+    if exists_or_link:
+        if do_backup:
+            log_verbose(f"Backing up existing {target_path} before symlink replace")
+            backup_target(target_path, slug)
+        log_verbose(f"Removing existing path at {target_path}")
+        _remove_path(target_path)
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    log_status(f"Linking {target_path} → {expected}")
+    target_path.symlink_to(expected, target_is_directory=source_path.is_dir())
+    log_status("Link complete")
+    return [], []
+
+
+def check_symlink_integrity(
+    protocol: Protocol,
+    repo_path: Path,
+) -> str | None:
+    """For symlink_sync protocols, return an error message if the link is missing/wrong; else None."""
+    if protocol.type != "symlink_sync":
+        return None
+    source_path = (repo_path / protocol.source).resolve()
+    target_path = expand_path(protocol.target)
+    if not target_path.is_symlink():
+        if target_path.exists():
+            return f"{target_path} exists but is not a symlink (expected -> {source_path})"
+        return f"{target_path} missing (expected symlink -> {source_path})"
+    if not _symlink_points_to(target_path, source_path):
+        try:
+            current = os.readlink(target_path)
+        except OSError:
+            current = "(unreadable)"
+        return f"{target_path} points to {current}, expected {source_path}"
+    return None
 
 
 def execute_protocol(
@@ -123,6 +191,8 @@ def execute_protocol(
 
     if protocol.type == "file_sync":
         missing_obl, missing_rec = _file_sync(source_path, target_path, slug, do_backup)
+    elif protocol.type == "symlink_sync":
+        missing_obl, missing_rec = _symlink_sync(source_path, target_path, slug, do_backup)
     else:
         raise ValueError(f"Unknown protocol type: {protocol.type}")
 

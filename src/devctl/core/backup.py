@@ -54,8 +54,14 @@ def _copytree_with_progress(
     shutil.copytree(src, dst, copy_function=copy_with_progress)
     progress.finish()
 
-_BACKUP_TIMESTAMP_SUFFIX = re.compile(r"^(.+)-(\d{8}T\d{6}Z)$")
+_BACKUP_TIMESTAMP_SUFFIX = re.compile(r"^(.+)-(\d{8}T\d+Z)$")
 _DEFAULT_RETENTION_COUNT = 3
+
+
+def _backup_timestamp() -> str:
+    """UTC timestamp with microsecond precision to avoid collisions within one apply run."""
+    now = datetime.now(UTC)
+    return now.strftime("%Y%m%dT%H%M%S") + f"{now.microsecond:06d}Z"
 
 
 def _backup_retention_count(env: Mapping[str, str] | None = None) -> int | None:
@@ -76,7 +82,7 @@ def _backup_retention_count(env: Mapping[str, str] | None = None) -> int | None:
 
 
 def _parse_backup_name(name: str) -> tuple[str, str] | None:
-    """Parse '<slug>-<YYYYMMDDTHHMMSSZ>' backup directory names."""
+    """Parse '<slug>-<YYYYMMDDTHHMMSS[ffffff]Z>' backup directory names."""
     match = _BACKUP_TIMESTAMP_SUFFIX.match(name)
     if not match:
         return None
@@ -128,17 +134,29 @@ def prune_backups(
 
 
 def backup_target(target_path: Path, slug: str) -> Path | None:
-    """Backup existing target to ~/.devctl/backups/<slug>-<timestamp>/. Returns backup path or None if nothing to backup."""
-    if not target_path.exists():
+    """Backup existing target to ~/.devctl/backups/<slug>-<timestamp>/. Returns backup path or None if nothing to backup.
+
+    Symlinks are backed up as link metadata only (no deep copy of the resolved tree).
+    """
+    # lexists: include broken symlinks (Path.exists() follows and would skip them)
+    if not target_path.exists() and not target_path.is_symlink():
         return None
 
     backups_dir = get_backups_dir()
     backups_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = _backup_timestamp()
     backup_path = backups_dir / f"{slug}-{timestamp}"
 
-    if target_path.is_dir():
+    if target_path.is_symlink():
+        log_status(f"Backing up symlink {target_path}...")
+        start = time.monotonic()
+        backup_path.mkdir(parents=True, exist_ok=True)
+        link_dest = os.readlink(target_path)
+        (backup_path / "SYMLINK_TARGET").write_text(link_dest, encoding="utf-8")
+        elapsed = time.monotonic() - start
+        log_status(f"Backup complete ({elapsed:.1f}s) → {backup_path.name}")
+    elif target_path.is_dir():
         size = _get_dir_size(target_path)
         size_str = _format_size(size)
         log_status(f"Backing up {target_path} ({size_str})...")
