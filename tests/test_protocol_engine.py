@@ -258,3 +258,295 @@ protocols:
     assert len(miss_o) == 2
     assert any("missing1.txt" in m for m in miss_o)
     assert any("missing2.txt" in m for m in miss_o)
+
+
+def test_execute_protocol_symlink_sync_create(tmp_path: Path) -> None:
+    """symlink_sync creates a directory symlink to source."""
+    source = tmp_path / "common" / "skills"
+    source.mkdir(parents=True)
+    (source / "demo").mkdir()
+    (source / "demo" / "SKILL.md").write_text("hi")
+    target = tmp_path / "home" / "skills"
+
+    protocol = Protocol(
+        name="skills",
+        type="symlink_sync",
+        source="common/skills",
+        target=str(target),
+        obligations=[],
+        recommendations=[],
+    )
+    missing_obl, missing_rec = execute_protocol(protocol, tmp_path, "test", do_backup=False)
+
+    assert target.is_symlink()
+    assert target.resolve() == source.resolve()
+    assert (target / "demo" / "SKILL.md").read_text() == "hi"
+    assert missing_obl == []
+    assert missing_rec == []
+
+
+def test_execute_protocol_symlink_sync_idempotent(tmp_path: Path) -> None:
+    """Re-applying symlink_sync when already correct is a no-op."""
+    source = tmp_path / "common" / "skills"
+    source.mkdir(parents=True)
+    target = tmp_path / "home" / "skills"
+    target.parent.mkdir(parents=True)
+    target.symlink_to(source.resolve())
+
+    protocol = Protocol(
+        name="skills",
+        type="symlink_sync",
+        source="common/skills",
+        target=str(target),
+        obligations=[],
+        recommendations=[],
+    )
+    execute_protocol(protocol, tmp_path, "test", do_backup=False)
+    execute_protocol(protocol, tmp_path, "test", do_backup=False)
+
+    assert target.is_symlink()
+    assert target.resolve() == source.resolve()
+
+
+def test_execute_protocol_symlink_sync_replaces_real_dir(tmp_path: Path) -> None:
+    """symlink_sync replaces a prior real directory (migration from file_sync)."""
+    source = tmp_path / "common" / "skills"
+    source.mkdir(parents=True)
+    (source / "from_common.txt").write_text("common")
+
+    target = tmp_path / "home" / "skills"
+    target.mkdir(parents=True)
+    (target / "old_copy.txt").write_text("stale")
+
+    protocol = Protocol(
+        name="skills",
+        type="symlink_sync",
+        source="common/skills",
+        target=str(target),
+        obligations=[],
+        recommendations=[],
+    )
+    execute_protocol(protocol, tmp_path, "test", do_backup=False)
+
+    assert target.is_symlink()
+    assert target.resolve() == source.resolve()
+    assert (target / "from_common.txt").read_text() == "common"
+    assert not (target / "old_copy.txt").exists()
+
+
+def test_execute_protocol_symlink_sync_repairs_broken_link(tmp_path: Path) -> None:
+    """symlink_sync replaces a broken symlink."""
+    source = tmp_path / "common" / "skills"
+    source.mkdir(parents=True)
+
+    target = tmp_path / "home" / "skills"
+    target.parent.mkdir(parents=True)
+    target.symlink_to(tmp_path / "does-not-exist")
+
+    protocol = Protocol(
+        name="skills",
+        type="symlink_sync",
+        source="common/skills",
+        target=str(target),
+        obligations=[],
+        recommendations=[],
+    )
+    execute_protocol(protocol, tmp_path, "test", do_backup=False)
+
+    assert target.is_symlink()
+    assert target.resolve() == source.resolve()
+
+
+def test_execute_protocol_symlink_sync_retargets_wrong_link(tmp_path: Path) -> None:
+    """symlink_sync replaces a symlink that points at the wrong path."""
+    source = tmp_path / "common" / "skills"
+    source.mkdir(parents=True)
+    wrong = tmp_path / "other"
+    wrong.mkdir()
+
+    target = tmp_path / "home" / "skills"
+    target.parent.mkdir(parents=True)
+    target.symlink_to(wrong.resolve())
+
+    protocol = Protocol(
+        name="skills",
+        type="symlink_sync",
+        source="common/skills",
+        target=str(target),
+        obligations=[],
+        recommendations=[],
+    )
+    execute_protocol(protocol, tmp_path, "test", do_backup=False)
+
+    assert target.is_symlink()
+    assert target.resolve() == source.resolve()
+
+
+def test_check_symlink_integrity(tmp_path: Path) -> None:
+    """check_symlink_integrity reports missing, wrong, and ok states."""
+    from devctl.core.protocol_engine import check_symlink_integrity
+
+    source = tmp_path / "common" / "skills"
+    source.mkdir(parents=True)
+    target = tmp_path / "home" / "skills"
+    protocol = Protocol(
+        name="skills",
+        type="symlink_sync",
+        source="common/skills",
+        target=str(target),
+        obligations=[],
+        recommendations=[],
+    )
+
+    assert check_symlink_integrity(protocol, tmp_path) is not None
+
+    target.parent.mkdir(parents=True)
+    target.mkdir()
+    assert "not a symlink" in (check_symlink_integrity(protocol, tmp_path) or "")
+
+    target.rmdir()
+    target.symlink_to(source.resolve())
+    assert check_symlink_integrity(protocol, tmp_path) is None
+
+    file_sync = Protocol(
+        name="c",
+        type="file_sync",
+        source="common/skills",
+        target=str(tmp_path / "out"),
+        obligations=[],
+        recommendations=[],
+    )
+    assert check_symlink_integrity(file_sync, tmp_path) is None
+
+
+def test_file_sync_replaces_child_symlink(tmp_path: Path) -> None:
+    """file_sync removes a conflicting child symlink then copies real content."""
+    source = tmp_path / "repo" / "vendor"
+    (source / "skills").mkdir(parents=True)
+    (source / "skills" / "from_repo.md").write_text("repo")
+
+    target = tmp_path / "home" / "vendor"
+    target.mkdir(parents=True)
+    missing = tmp_path / "gone"
+    (target / "skills").symlink_to(missing)
+
+    protocol = Protocol(
+        name="vendor",
+        type="file_sync",
+        source="vendor",
+        target=str(target),
+        obligations=[],
+        recommendations=[],
+    )
+    execute_protocol(protocol, tmp_path / "repo", "test", do_backup=False)
+
+    skills = target / "skills"
+    assert not skills.is_symlink()
+    assert skills.is_dir()
+    assert (skills / "from_repo.md").read_text() == "repo"
+
+
+def test_apply_protocols_restores_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Mid-apply failure restores targets from the run-level snapshot."""
+    from devctl.core import backup
+    from devctl.core.protocol_engine import apply_protocols, execute_protocol
+
+    backups_dir = tmp_path / "backups"
+    backups_dir.mkdir()
+    monkeypatch.setattr(backup, "get_backups_dir", lambda: backups_dir)
+
+    t1 = tmp_path / "t1"
+    t2 = tmp_path / "t2"
+    t1.mkdir()
+    t2.mkdir()
+    (t1 / "keep.txt").write_text("original1")
+    (t2 / "keep.txt").write_text("original2")
+
+    repo = tmp_path / "repo"
+    (repo / "s1").mkdir(parents=True)
+    (repo / "s2").mkdir(parents=True)
+    (repo / "s1" / "keep.txt").write_text("new1")
+    (repo / "s2" / "keep.txt").write_text("new2")
+    (repo / "protocol.yaml").write_text(
+        f"""
+version: v1
+protocols:
+  - name: one
+    type: file_sync
+    source: s1
+    target: {t1}
+  - name: two
+    type: file_sync
+    source: s2
+    target: {t2}
+"""
+    )
+
+    real_execute = execute_protocol
+    calls = {"n": 0}
+
+    def flaky_execute(protocol, repo_path, slug, do_backup=True):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("boom")
+        return real_execute(protocol, repo_path, slug, do_backup=do_backup)
+
+    monkeypatch.setattr(
+        "devctl.core.protocol_engine.execute_protocol",
+        flaky_execute,
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        apply_protocols(repo, "slug", do_backup=True)
+
+    assert (t1 / "keep.txt").read_text() == "original1"
+    assert (t2 / "keep.txt").read_text() == "original2"
+
+
+def test_apply_protocols_multi_protocol_one_run_backup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Multiple protocols produce a single run backup folder."""
+    from devctl.core import backup
+    from devctl.core.protocol_engine import apply_protocols
+
+    backups_dir = tmp_path / "backups"
+    backups_dir.mkdir()
+    monkeypatch.setattr(backup, "get_backups_dir", lambda: backups_dir)
+
+    t1 = tmp_path / "t1"
+    t2 = tmp_path / "t2"
+    t1.mkdir()
+    t2.mkdir()
+    (t1 / "a.txt").write_text("a")
+    (t2 / "b.txt").write_text("b")
+
+    repo = tmp_path / "repo"
+    (repo / "s1").mkdir(parents=True)
+    (repo / "s2").mkdir(parents=True)
+    (repo / "s1" / "a.txt").write_text("A")
+    (repo / "s2" / "b.txt").write_text("B")
+    (repo / "protocol.yaml").write_text(
+        f"""
+version: v1
+protocols:
+  - name: one
+    type: file_sync
+    source: s1
+    target: {t1}
+  - name: two
+    type: file_sync
+    source: s2
+    target: {t2}
+"""
+    )
+
+    apply_protocols(repo, "slug", do_backup=True)
+
+    runs = [p for p in backups_dir.iterdir() if p.is_dir()]
+    assert len(runs) == 1
+    assert "-run-" in runs[0].name

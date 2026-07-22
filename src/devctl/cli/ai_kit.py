@@ -5,7 +5,7 @@ from pathlib import Path
 
 import click
 
-from devctl.core.protocol_engine import apply_protocols, load_protocols
+from devctl.core.protocol_engine import apply_protocols, check_symlink_integrity, load_protocols
 from devctl.core.repo_manager import clone_or_pull, get_repo_path, url_to_slug
 from devctl.core.versioning import list_repos, register_repo
 from devctl.utils.logging import log_verbose
@@ -217,8 +217,11 @@ def status(repo_url: str | None) -> None:
                     target = expand_path(p.target)
                     missing_obl = [target / r for r in p.obligations if not (target / r).exists()]
                     missing_rec = [target / r for r in p.recommendations if not (target / r).exists()]
-                    if missing_obl or missing_rec:
+                    link_issue = check_symlink_integrity(p, path)
+                    if missing_obl or missing_rec or link_issue:
                         click.echo(f"  protocol {p.name}:")
+                        if link_issue:
+                            click.echo(f"    symlink: {link_issue}")
                         if missing_obl:
                             click.echo(f"    drift (obligations): {[str(x) for x in missing_obl]}")
                         if missing_rec:
@@ -261,6 +264,11 @@ def doctor(repo_url: str | None) -> None:
             log_verbose(f"Validating {slug}")
             _, protocols = load_protocols(path)
             for p in protocols:
+                link_issue = check_symlink_integrity(p, path)
+                if link_issue:
+                    click.echo(f"{slug}: {link_issue}")
+                    click.echo(f"  Fix: run 'devctl ai-kit update --repo {info.get('url', '?')}'")
+                    issues += 1
                 target = expand_path(p.target)
                 for r in p.obligations:
                     full = target / r

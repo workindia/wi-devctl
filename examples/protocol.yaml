@@ -2,6 +2,11 @@
 # Place this file in the ROOT of the repo you want to sync from.
 # Then run: devctl ai-kit setup --repo <your-repo-url>
 # Repo URL can be HTTPS (https://github.com/org/repo) or SSH (git@github.com:org/repo.git)
+#
+# Protocol types:
+#   file_sync    — merge-copy vendor-specific config into the target directory
+#   symlink_sync — ensure target is a symlink to source (shared skills/commands)
+# Declare all file_sync entries before symlink_sync entries.
 
 version: v1
 
@@ -17,3 +22,12 @@ protocols:
     recommendations:
       - skills/debugging.md
 
+  - name: cursor-skills
+    type: symlink_sync
+    source: .common/skills
+    target: ~/.cursor/skills
+
+  - name: cursor-commands
+    type: symlink_sync
+    source: .common/commands
+    target: ~/.cursor/commands

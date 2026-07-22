@@ -13,7 +13,7 @@ Developer control plane CLI — sync and manage developer tooling configurations
 - **Self-updating binary** — Single executable with automatic updates from GitHub releases
 - **Background config sync** — Optional hourly pull via launchd (macOS) or cron (Linux), with desktop notifications when updates land
 - **One-shot install** — Optional `install.sh` env vars to install devctl, run `ai-kit setup`, and register background sync in one run
-- **Backup before overwrite** — Snapshots targets before applying changes; old backups are pruned automatically (keeps last 3 per repo by default)
+- **Backup before overwrite** — One run-level snapshot of protocol targets before applying; restores that snapshot if apply fails; old run backups are pruned (keeps last 3 runs per repo by default)
 
 ## High-Level Design (HLD)
 
@@ -47,9 +47,9 @@ Developer control plane CLI — sync and manage developer tooling configurations
 | **CLI** | ai-kit | setup, sync, update, install/uninstall-background-sync, status, doctor |
 | **CLI** | devspace / local | Domain stubs (planned) |
 | **Core** | repo_manager | Clone/pull Git repos, URL → slug |
-| **Core** | protocol_engine | Parse `protocol.yaml`, execute file_sync, etc. |
+| **Core** | protocol_engine | Parse `protocol.yaml`, execute `file_sync` / `symlink_sync`, etc. |
 | **Core** | versioning | Persist repo metadata in `state.json` |
-| **Core** | backup | Snapshot target before overwrite |
+| **Core** | backup | One run-level snapshot before apply; restore on failure; prune old runs |
 | **Core** | updater | Self-update binary from GitHub releases |
 | **Core** | config_sync | Check managed repos for new pushes, pull and re-apply, notify |
 | **Core** | background_sync | Install/uninstall launchd (macOS) or cron (Linux) for hourly sync |
@@ -65,8 +65,9 @@ User: devctl ai-kit setup --repo https://github.com/org/configs
          │                │                        │
          │                │                        ├──► repo_manager.clone_or_pull()
          │                │                        ├──► protocol_engine.apply_protocols()
-         │                │                        │         ├──► backup.backup_target()
-         │                │                        │         └──► file_sync (merge copy)
+│                │                        │         ├──► backup.backup_apply_run() (once)
+│                │                        │         ├──► file_sync (merge copy)
+         │                │                        │         └──► symlink_sync (shared skills/commands)
          │                │                        └──► versioning.register_repo()
          │                │
          │                └── check wi-devctl releases
@@ -161,7 +162,10 @@ protocols:
     source: .cursor
     target: ~/.cursor
     obligations: [rules/security.json]
-    recommendations: [skills/debugging.md]
+  - name: cursor-skills
+    type: symlink_sync
+    source: .common/skills
+    target: ~/.cursor/skills
 ```
 
 2. Run setup:
@@ -176,18 +180,19 @@ devctl ai-kit setup --repo https://github.com/your-org/ai-configs
 devctl ai-kit install-background-sync
 ```
 
-4. Repo is cloned to `~/.devctl/repos/`, configs are merged into `~/.cursor`.
+4. Repo is cloned to `~/.devctl/repos/`. Vendor config is merge-copied (`file_sync`); shared skills/commands are symlinked (`symlink_sync`).
 
 ## Protocol Reference
 
 | Field | Description |
 |-------|-------------|
+| `type` | `file_sync` (merge copy) or `symlink_sync` (directory symlink to source) |
 | `source` | Path in repo (relative to root) |
 | `target` | Local path (`~` expanded) |
 | `obligations` | Required files under target (reported if missing) |
 | `recommendations` | Optional files (reported if missing) |
 
-`protocol.yaml` or `protocol.yml` must live at the **root** of the repo you sync from.
+Declare `file_sync` entries before `symlink_sync` entries. `protocol.yaml` or `protocol.yml` must live at the **root** of the repo you sync from.
 
 ## Domains & Use Cases
 
@@ -201,11 +206,11 @@ A **domain** is a grouped set of CLI commands for a specific use case. Each doma
 
 ### How use cases work
 
-All domains share the same flow: clone repo → parse `protocol.yaml` → apply protocols → track state. The protocol engine supports multiple types (currently `file_sync`; extensible to `env_sync`, `script_run`, etc.). Domain-specific logic sits on top of this core.
+All domains share the same flow: clone repo → parse `protocol.yaml` → apply protocols → track state. The protocol engine supports `file_sync` and `symlink_sync` (extensible to `env_sync`, `script_run`, etc.). Domain-specific logic sits on top of this core.
 
 | Use case | Domain | What it does | Example |
 |----------|--------|---------------|---------|
-| **AI configs** | ai-kit | Sync `.cursor` rules/skills to `~/.cursor` | Cursor rules, agent skills |
+| **AI configs** | ai-kit | Sync vendor config via `file_sync`; shared skills/commands via `symlink_sync` | Cursor rules, shared agent skills |
 | **Dev environments** | devspace | Define containers/VMs, start Docker/Podman | Dev containers, Colima setup |
 | **Local tooling** | local | Sync env vars, run setup scripts | `.env` files, dev daemons |
 | **Security** | (new domain) | Scan for secrets, enforce policies | Pre-commit hooks, policy configs |
@@ -232,7 +237,7 @@ Fork the repo and add domains for your org — no hardcoded URLs; each domain wo
 | `DEVCTL_UPDATE_CHECK_INTERVAL_HOURS` | Hours between auto-update checks (default: 24) |
 | `DEVCTL_CONFIG_SYNC_INTERVAL_MINUTES` | Minutes between ai-kit config sync rate-limit checks; overrides `DEVCTL_CONFIG_SYNC_INTERVAL_HOURS` when set (fractional ok) |
 | `DEVCTL_CONFIG_SYNC_INTERVAL_HOURS` | Hours between config sync checks when minutes unset (default: 1; fractional ok) |
-| `DEVCTL_BACKUP_RETENTION_COUNT` | Number of config backups to keep per repo slug (default: 3). Set to `0` to disable pruning |
+| `DEVCTL_BACKUP_RETENTION_COUNT` | Number of **run-level** config backups to keep per repo slug (default: 3). Set to `0` to disable pruning |
 | `DEVCTL_BACKUP_RETENTION_DISABLED` | Set to `1` to keep all backups (no automatic pruning) |
 | `DEVCTL_AI_KIT_REPO` | *(install.sh only)* If set, run `ai-kit setup` after binary install |
 | `DEVCTL_AI_KIT_BACKGROUND_SYNC` | *(install.sh only)* Set to `1` to run `install-background-sync` after setup |
@@ -323,7 +328,7 @@ Run `pytest` from the repo root (uses `pythonpath = ["src"]` in `pyproject.toml`
 
 | Area | File | What it covers |
 |------|------|----------------|
-| **Protocols** | `tests/test_protocol_engine.py` | Load YAML/YML, validation errors, `file_sync`, merge behavior, **obligations / recommendations** present vs missing, unknown type, missing source, `apply_protocols` across multiple protocols |
+| **Protocols** | `tests/test_protocol_engine.py` | Load YAML/YML, validation errors, `file_sync`, `symlink_sync`, merge behavior, **obligations / recommendations** present vs missing, unknown type, missing source, `apply_protocols` across multiple protocols |
 | **Updater** | `tests/test_updater.py` | Manifest / version comparison, platform key shape, `perform_update` rate limit and force paths (no real download) |
 | **Config sync** | `tests/test_config_sync.py` | `perform_config_sync`: no repos, rate limit, pull + notify, skip bad path / no remote updates |
 | **CLI** | `tests/test_cli.py` | `list`, `ai-kit sync`, `update-cli`, `--version`, `devspace`/`local` help (`DEVCTL_SKIP_AUTO_UPDATE=1`, isolated `HOME`) |
@@ -331,7 +336,7 @@ Run `pytest` from the repo root (uses `pythonpath = ["src"]` in `pyproject.toml`
 | **Background install** | `tests/test_background_sync.py` | launchd plist write (mocked `launchctl`), missing binary, uninstall when absent |
 | **Notifications** | `tests/test_notify.py` | `DEVCTL_SKIP_NOTIFY`, macOS `osascript` path |
 | **Repos** | `tests/test_repo_manager.py` | URL → slug, `fetch_and_has_updates` (mocked git) |
-| **Backups** | `tests/test_backup.py` | Backup snapshots, retention pruning, dry-run |
+| **Backups** | `tests/test_backup.py` | Run-level snapshots, restore, retention pruning, dry-run |
 | **SSL** | `tests/test_ssl_certs.py` | certifi CA bundle configuration for HTTPS |
 
 End-to-end **git clone**, **auto-update binary replace**, and **real launchd/cron** are not run in CI (use a manual machine or staging for those).
