@@ -18,10 +18,10 @@ jobs:
       matrix:
         include:
           # macos-latest is arm64. PyInstaller cannot cross-compile, so the
-          # Intel asset must be built on an x86_64 runner.
+          # Intel asset is a separate build on the macOS 15 Intel runner.
           - os: macos-15-intel
             platform: darwin-amd64
-          - os: macos-latest
+          - os: macos-14
             platform: darwin-arm64
           - os: ubuntu-latest
             platform: linux-amd64
