@@ -17,9 +17,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
+          # macos-latest is arm64. PyInstaller cannot cross-compile, so the
+          # Intel asset must be built on an x86_64 runner.
+          - os: macos-15-intel
             platform: darwin-amd64
-          - os: macos-14
+          - os: macos-latest
             platform: darwin-arm64
           - os: ubuntu-latest
             platform: linux-amd64
@@ -63,6 +65,20 @@ jobs:
           else
             mv devctl devctl-${{ matrix.platform }}
           fi
+
+      - name: Verify binary architecture
+        shell: bash
+        run: |
+          bin="dist/devctl-${{ matrix.platform }}"
+          echo "Built: $(file "$bin")"
+          case "${{ matrix.platform }}" in
+            darwin-amd64)
+              file "$bin" | grep -q 'x86_64' || { echo "expected an x86_64 binary"; exit 1; }
+              ;;
+            darwin-arm64)
+              file "$bin" | grep -q 'arm64' || { echo "expected an arm64 binary"; exit 1; }
+              ;;
+          esac
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
