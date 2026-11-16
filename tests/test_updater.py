@@ -1,5 +1,7 @@
 """Tests for updater."""
 
+import os
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -65,6 +67,48 @@ def test_perform_update_skips_when_not_due() -> None:
         has_update, ver, url = perform_update(None, force=False)
         assert has_update is False
         assert url is None
+
+
+def test_perform_update_resets_pyinstaller_environment(monkeypatch, tmp_path) -> None:
+    """Restart the replaced binary as a new PyInstaller process."""
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.delenv("PYINSTALLER_RESET_ENVIRONMENT", raising=False)
+    monkeypatch.setattr(
+        "devctl.core.updater.check_for_update",
+        lambda manifest_url: (True, "v9.9.9", "https://example.com/devctl"),
+    )
+
+    class _Response:
+        def read(self) -> bytes:
+            return b"new-binary"
+
+        def __enter__(self) -> "_Response":
+            return self
+
+        def __exit__(self, *args) -> bool:
+            return False
+
+    monkeypatch.setattr("devctl.core.updater.open_url", lambda *args, **kwargs: _Response())
+
+    installed = tmp_path / "devctl"
+    installed.write_bytes(b"old-binary")
+    monkeypatch.setattr(sys, "executable", str(installed))
+
+    seen = {}
+
+    def _execv(exe: str, argv: list) -> None:
+        seen["exe"] = exe
+        seen["argv"] = argv
+        seen["reset"] = os.environ.get("PYINSTALLER_RESET_ENVIRONMENT")
+
+    monkeypatch.setattr("devctl.core.updater.os.execv", _execv)
+
+    perform_update(None, force=True)
+
+    assert seen["reset"] == "1"
+    assert seen["exe"] == str(installed)
+    assert seen["argv"][0] == str(installed)
+    assert installed.read_bytes() == b"new-binary"
 
 
 def test_check_for_update_no_platform() -> None:
