@@ -202,5 +202,9 @@ def perform_update(manifest_url: str | None, force: bool = False) -> Tuple[bool,
         log_error(f"Failed to replace binary: {e}")
         return False, latest_version, None
 
+    # PyInstaller >= 6.22 treats an inherited _PYI_* environment as an
+    # already-unpacked onefile process. Without this, the new bootloader
+    # rejects the previous unpack directory and the restarted command exits.
+    os.environ["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     os.execv(exe, [exe] + sys.argv[1:])
     return True, latest_version, download_url  # unreachable
